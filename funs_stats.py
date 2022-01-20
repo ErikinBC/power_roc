@@ -197,8 +197,17 @@ class dgp_bin():
     studentized:    Bootstraps each bootstrapped samples to get a t-dist
     BCa:            Bias-corrected and accelerated approach
     """
+    # method=None;seed=i
     def run_bootstrap(self, s1, s0, n1_trial, n0_trial, method='basic', n_bs=1000, seed=None, alpha=None):
-        assert method in ['basic', 'quantile', 'expanded', 'studentized', 'bca']
+        lst_method = ['basic', 'quantile', 'expanded', 'studentized', 'bca']
+        di_leaf = {'sens':None, 'spec':None}
+        if method is not None:
+            assert method in lst_method
+            di_ci = {method:di_leaf}
+        else:
+            # Calculate all methods except studentized
+            di_ci = dict.fromkeys([m for m in lst_method if m is not 'studentized'])
+            di_ci = {k:di_leaf.copy() for k in di_ci.keys()}
         if alpha is None:
             alpha = self.alpha
         alpha_vec = np.array([1-alpha/2, alpha/2])
@@ -220,18 +229,23 @@ class dgp_bin():
         power_bs_sens_se = power_bs_sens.std(ddof=1)
         power_bs_spec_se = power_bs_spec.std(ddof=1)
 
-        if method == 'basic':
-            power_sens_ci = power_sens - power_bs_sens_se * norm.ppf(alpha_vec)
-            power_spec_ci = power_spec - power_bs_spec_se * norm.ppf(alpha_vec)
-        elif method == 'quantile':
-            power_sens_ci = np.flip(np.quantile(power_bs_sens, alpha_vec))
-            power_spec_ci = np.flip(np.quantile(power_bs_spec, alpha_vec))
-        elif method == 'expanded':
+        if 'basic' in di_ci:
+            di_ci['basic']['sens'] = power_sens - power_bs_sens_se * norm.ppf(alpha_vec)
+            di_ci['basic']['spec'] = power_spec - power_bs_spec_se * norm.ppf(alpha_vec)
+        
+        if 'quantile' in di_ci:
+            di_ci['quantile']['sens'] = np.flip(np.quantile(power_bs_sens, alpha_vec))
+            di_ci['quantile']['spec'] = np.flip(np.quantile(power_bs_spec, alpha_vec))
+
+        if 'expanded' in di_ci:
             alpha_adj1 = norm.cdf(np.sqrt(n1_trial/(n1_trial-1))*t(df=n1_trial-1).ppf(alpha/2))
             alpha_adj0 = norm.cdf(np.sqrt(n0_trial/(n0_trial-1))*t(df=n0_trial-1).ppf(alpha/2))
-            power_sens_ci = np.quantile(power_bs_sens, [alpha_adj1/2, 1-alpha_adj1/2])
-            power_spec_ci = np.quantile(power_bs_spec, [alpha_adj0/2, 1-alpha_adj0/2])
-        elif method == 'studentized':
+            alpha_adj1 = [alpha_adj1/2, 1-alpha_adj1/2]
+            alpha_adj0 = [alpha_adj0/2, 1-alpha_adj0/2]
+            di_ci['expanded']['sens'] = np.quantile(power_bs_sens, alpha_adj1)
+            di_ci['expanded']['spec'] = np.quantile(power_bs_spec, alpha_adj0)
+
+        if 'studentized' in di_ci:
             # Bootstrap the bootstrapped samples to get a variance of each observation
             # n_student == n_bs for computational simplicity
             power_sens_stud_se, power_spec_stud_se = np.zeros(n_bs), np.zeros(n_bs)
@@ -254,9 +268,10 @@ class dgp_bin():
             t_alpha_spec = np.quantile(t_spec, alpha_vec)
             alpha_adj1 = np.flip(norm.cdf(t_alpha_sens))
             alpha_adj0 = np.flip(norm.cdf(t_alpha_spec))
-            power_sens_ci = np.quantile(power_bs_sens, alpha_adj1)
-            power_spec_ci = np.quantile(power_bs_spec, alpha_adj0)
-        elif method == 'bca':
+            di_ci['studentized']['sens'] = np.quantile(power_bs_sens, alpha_adj1)
+            di_ci['studentized']['spec'] = np.quantile(power_bs_spec, alpha_adj0)
+
+        if 'bca' in di_ci:
             # Leave-one-out sens/spec
             tp1, tn1 = int(sens_hat*n1), int(spec_hat*n0)
             sens_hat_loo = np.append(np.repeat((tp1-1)/(n1-1),tp1), np.repeat(tp1/(n1-1),n1-tp1))
@@ -276,26 +291,26 @@ class dgp_bin():
             zhat0 = norm.ppf( (np.sum(power_bs_spec < power_spec)+1)/(n_bs+1) )
             alpha_adj1 = norm.cdf(zhat1 + (zhat1+zalpha)/(1-a1*(zhat1+zalpha)))
             alpha_adj0 = norm.cdf(zhat0 + (zhat0+zalpha)/(1-a0*(zhat0+zalpha)))
-            power_sens_ci = np.quantile(power_bs_sens, alpha_adj1)
-            power_spec_ci = np.quantile(power_bs_spec, alpha_adj0)
-        else:
-            sys.exit('Pick a valid method!')
-        # Get the confidence intervals for the power
-        res_sens = pd.DataFrame({'msr':'sens', 'tt':['lb','ub'], 'val':power_sens_ci})
-        res_spec = pd.DataFrame({'msr':'spec', 'tt':['lb','ub'], 'val':power_spec_ci})
-        res = pd.concat(objs=[res_sens, res_spec], axis=0).reset_index(drop=True)
+            di_ci['bca']['sens'] = np.quantile(power_bs_sens, alpha_adj1)
+            di_ci['bca']['spec'] = np.quantile(power_bs_spec, alpha_adj0)
+        # Merge all
+        res = pd.DataFrame.from_dict(di_ci,orient='index').reset_index()
+        res = res.rename(columns={'index':'method'}).melt('method',None,'msr')
+        res = res.explode('value').assign(idx=lambda x: x.groupby(['method','msr']).cumcount())
+        res = res.pivot_table('value',['method','msr'],'idx', lambda x: x)
+        res = res.rename(columns={0:'lb', 1:'ub'}).reset_index()
         return res
         
 
     """
-    n1_trail:               Number of positive samples during trial
+    n1_trial:               Number of positive samples during trial
     n0_trial:               Number of negative samples during trial
     method:                 Bootstrapping method (see run_bootstrap)
     seed:                   Will seed the bootstrap
     n_bs:                   Number of bootstrap/studentitzed iterations
     alpha:                  None defaults to inherited attributed
     """
-    def run_power(self, n1_trial, n0_trial, method='quantile', seed=1, n_bs=1000, alpha=None):
+    def run_power(self, n1_trial, n0_trial, method=None, seed=1, n_bs=1000, alpha=None):
         assert isinstance(n1_trial, int) and n1_trial > 0
         assert isinstance(n0_trial, int) and n0_trial > 0
         s1 = pd.Series(self.s_thresh[self.y_thresh == 1])
@@ -308,6 +323,5 @@ class dgp_bin():
         lst_h0 = np.array([self.null_sens, self.null_spec])
         lst_oracle = np.array([self.sens_oracle, self.spec_oracle])
         lst_gt_power = self.power_binom(p_act=lst_oracle, p_null=lst_h0, n=lst_n, alpha=alpha)
-        dat_gt = pd.DataFrame({'msr':lst_msr,'n':lst_n, 'h0':lst_h0, 'power':lst_gt_power})
-        dat_gt = perf_ci.merge(dat_gt)
-        self.df_power = dat_gt.pivot_table('val',['msr','n','h0','power'],'tt').reset_index()
+        dat_gt = pd.DataFrame({'msr':lst_msr,'n_trial':lst_n, 'h0':lst_h0, 'power':lst_gt_power})
+        self.df_power = dat_gt.merge(perf_ci)
