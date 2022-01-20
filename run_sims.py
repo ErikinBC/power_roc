@@ -13,6 +13,7 @@ makeifnot(dir_figures)
 di_msr = {'sens':'Sensitivity', 'spec':'Specificity', 'thresh':'Threshold'}
 di_method = {'basic':'Basic', 'quantile':'Quantile', 'expanded':'Quantile (t-adj)', 'studentized':'Studentized', 'bca':'BCa'}
 
+
 ##############################################
 # --- (1) CHECK EMPIRICAL TO GROUNDTRUTH --- #
 
@@ -121,7 +122,7 @@ mu, p = 1, 0.5
 n_test, n_trial = 400, 400
 n_bs, alpha = 1000, 0.05
 sens = 0.5
-nsim = 2000
+nsim = 2500
 
 # TEST OVER RANGES OF SENSITIVITY/SPECIFCITY/SAMPLE SIZE
 lst_sens = [0.5, 0.6, 0.7]
@@ -167,7 +168,7 @@ for sens in lst_sens:
                     res_i = enc_dgp.df_power.merge(res_trial)
                     res_i = res_i.merge(enc_dgp.df_rv.pivot('msr','tt','val').reset_index(),'left')
                     # Add on hyperparameters
-                    res_i = res_i.assign(sens=sens, n_trial=n_trial, n_test=n_test, margin=margin)
+                    res_i = res_i.assign(sens=sens, n_trial=n_trial, n_test=n_test, margin=margin, sim=i)
                     holder_power.append(res_i)
 
                     # Run-time update
@@ -178,17 +179,19 @@ for sens in lst_sens:
                         srate = n_run/dtime
                         seta = n_left / srate
                         meta = seta / 60
-                        print('Iteration %i/%i for param %i of %i (ETA: %i seconds, %0.1f minutes)' % (i+1, nsim, j, n_hp seta, meta))
+                        print('Iteration %i/%i for param %i of %i (ETA: %i seconds, %0.1f minutes)' % (i+1, nsim, j, n_hp, seta, meta))
 # Merge
 res_power = pd.concat(holder_power).reset_index(drop=True)
-res_power = res_power.drop(columns=['n','h0','z','pval'])
+res_power.to_csv('res_power.csv',index=False)
+res_power.drop(columns=['h0','z','pval','emp','oracle'], inplace=True, errors='ignore')
+cn_gg = ['msr', 'sens', 'n_trial', 'n_test', 'margin', 'method']
+np.all(res_power.groupby(cn_gg).size() == nsim)
 # (i) Calculate the coverage
 res_power = res_power.assign(cover=lambda x: (x['power']>x['lb']) & (x['power']<x['ub']))
-res_cover = res_power.groupby(['msr'])['cover'].sum().reset_index()
+res_cover = res_power.groupby(cn_gg)['cover'].sum().reset_index()
 res_cover = get_CI(res_cover, 'cover', nsim)
-print(res_cover)
 # (ii) Compare how expected power lines up to actual
-res_calib = res_power.groupby('msr')[['power','reject']].sum().reset_index()
+res_calib = res_power.groupby(cn_gg)[['power','reject']].sum().reset_index()
 res_calib = get_CI(res_calib, 'reject', nsim).assign(power=lambda x: x['power']/nsim)
 
 
