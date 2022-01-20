@@ -3,67 +3,11 @@ import numpy as np
 import pandas as pd
 import plotnine as pn
 from time import time
-from funs_stats import dgp_bin, emp_roc_curve, auc_rank
 from funs_support import makeifnot
-
+from funs_stats import dgp_bin, emp_roc_curve, auc_rank, get_CI
 dir_base = os.getcwd()
 dir_figures = os.path.join(dir_base, 'figures')
 makeifnot(dir_figures)
-
-
-################################
-# --- (3) POWER ESTIMATES  --- #
-
-mu, p = 1, 0.5
-n_train, n_trial = 400, 400
-n_bs, alpha = 1000, 0.05
-sens = 0.5
-margin = 0.1
-enc_dgp = dgp_bin(mu=mu, p=p, sens=sens)
-
-# (i) SET UP THE TEST STATISTIC AND REJECT CRITERION
-# (ii) BOOSTRAP THE SCORES, SENSITIVIES, AND ESTIMATE POWER RANGE BASED ON THAT
-i = 0
-n1_trial, n0_trial = 200, 200
-self = dgp_bin(mu=mu, p=p, sens=sens)
-dat_train = enc_dgp.dgp_bin(n=n_train, seed=i)
-self.learn_threshold(y=dat_train['y'], s=dat_train['s'])
-enc_dgp.create_df()
-null_sens = self.sens_emp - margin
-null_spec = self.spec_emp - margin
-self.run_power(null_sens, null_spec, n1_trial, n0_trial, alpha, n_bs, seed=i+2)
-
-nsim = 250
-stime = time()
-holder_power_ci = []
-for i in range(nsim):
-    # (i) Generate data (going to to use oracle n1, n0)
-    dat_train = enc_dgp.dgp_bin(n=n_train, seed=i)
-    dat_trial = enc_dgp.dgp_bin(n=n_trial, seed=i+1)
-    n0_trial, n1_trial = dat_trial['y'].value_counts().sort_index()
-
-    # (ii) Learn threshold on sensitivity target and estimate power
-    enc_dgp.learn_threshold(y=dat_train['y'], s=dat_train['s'])
-    enc_dgp.create_df()
-    null_sens = enc_dgp.sens_emp - margin
-    null_spec = enc_dgp.spec_emp - margin
-    enc_dgp.run_power(null_sens, null_spec, n1_trial, n0_trial, alpha, n_bs, seed=i+2)
-    holder_power_ci.append(enc_dgp.df_power.assign(sim=i))
-    
-    # (iii) Run hypothesis test
-
-    # Run-time update
-    if (i + 1) % 1 == 0:
-        dtime, n_left = time() - stime, nsim-(i+1)
-        srate = (i+1)/dtime
-        seta = n_left / srate
-        print('Iteration %i of %i (ETA: %i seconds, %0.1f minutes)' % (i+1, nsim, seta, seta/60))
-
-# Compare power coverage
-res_power = pd.concat(holder_power_ci).reset_index(drop=True)
-res_power = res_power.assign(cover=lambda x: (x['power']>x['lb']) & (x['power']<x['ub']) )
-res_power.groupby(['msr'])['cover'].mean().reset_index()
-
 
 ##############################################
 # --- (1) CHECK EMPIRICAL TO GROUNDTRUTH --- #
@@ -117,11 +61,79 @@ res_tfpr_wide = res_tfpr_wide.melt(['sim','msr',di_tt['oracle']])
 res_tfpr_wide = res_tfpr_wide.dropna().reset_index(drop=True)
 
 
+##################################
+# --- (3) POWER SIMULATIONS  --- #
+
+mu, p = 1, 0.5
+n_train, n_trial = 400, 400
+n_bs, alpha = 1000, 0.05
+sens = 0.5
+margin = 0.1
+nsim = 2500
+method = 'quantile'
+
+enc_dgp = dgp_bin(mu=mu, p=p, sens=sens, alpha=alpha)
+stime = time()
+holder_power = []
+for i in range(nsim):
+    # (i) Generate data (going to to use oracle n1, n0)
+    dat_train = enc_dgp.dgp_bin(n=n_train, seed=i)
+    dat_trial = enc_dgp.dgp_bin(n=n_trial, seed=i+1)
+    n0_trial, n1_trial = dat_trial['y'].value_counts().sort_index()
+
+    # (ii) Learn threshold on sensitivity target and estimate power
+    enc_dgp.learn_threshold(y=dat_train['y'], s=dat_train['s'])
+    enc_dgp.create_df()
+    null_sens = enc_dgp.sens_emp - margin
+    null_spec = enc_dgp.spec_emp - margin
+    enc_dgp.set_null_hypotheis(null_sens, null_spec)
+    enc_dgp.run_power(n1_trial, n0_trial, method=method, seed=i, n_bs=n_bs)
+    
+    # (iii) Run hypothesis test
+    vec_msr = ['sens', 'spec']
+    vec_act = enc_dgp.get_tptn(y=dat_trial['y'],s=dat_trial['s']).values.flatten()
+    vec_null = np.array([null_sens, null_spec])
+    vec_n = np.array([n1_trial, n0_trial])    
+    res_trial = enc_dgp.binom_stat(p_act=vec_act, p_null=vec_null, n=vec_n)
+    res_trial.insert(0, 'msr', vec_msr)
+
+    # (iv) Store
+    res_i = enc_dgp.df_power.merge(res_trial)
+    res_i = res_i.merge(enc_dgp.df_rv.pivot('msr','tt','val').reset_index(),'left')
+    holder_power.append(res_i)
+
+    # Run-time update
+    if (i + 1) % 100 == 0:
+        dtime, n_left = time() - stime, nsim-(i+1)
+        srate = (i+1)/dtime
+        seta = n_left / srate
+        print('Iteration %i of %i (ETA: %i seconds, %0.1f minutes)' % (i+1, nsim, seta, seta/60))
+# Merge
+res_power = pd.concat(holder_power).reset_index(drop=True)
+res_power = res_power.drop(columns=['n','h0','z','pval'])
+# (i) Calculate the coverage
+res_power = res_power.assign(cover=lambda x: (x['power']>x['lb']) & (x['power']<x['ub']))
+res_cover = res_power.groupby(['msr'])['cover'].sum().reset_index()
+res_cover = get_CI(res_cover, 'cover', nsim)
+print(res_cover)
+# (ii) Compare how expected power lines up to actual
+res_calib = res_power.groupby('msr')[['power','reject']].sum().reset_index()
+res_calib = get_CI(res_calib, 'reject', nsim).assign(power=lambda x: x['power']/nsim)
+
+
+####################################
+# --- (4) COMPARATIVE STATICS  --- #
+
+
+################################
+# --- (5) REAL-WORLD DATA  --- #
 
 
 
 #######################
-# --- (X) FIGURES --- #
+# --- (6) FIGURES --- #
+
+# FIGURE WITH OPERATING THRESHOLD ON THE X-AXIS
 
 # (i) Empirical ROC to actual
 gg_roc_gt = (pn.ggplot(df_roc,pn.aes(x='1-spec',y='sens',size='tt',color='tt',alpha='tt',group='sim')) + 
