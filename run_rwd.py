@@ -174,7 +174,7 @@ gg_test_margin = (pn.ggplot(res_test_margin, pn.aes(x='margin',fill='n_trial')) 
     pn.ggtitle('95% CI based on quantile approach') +
     pn.labs(x='Null hypothesis margin',y='Power estimate (CI)') + 
     pn.geom_ribbon(pn.aes(ymin='lb',ymax='ub'),color='black',alpha=0.5))
-gg_test_margin.save(os.path.join(dir_figures,'gg_power_margin.png'),height=4,width=9)
+gg_test_margin.save(os.path.join(dir_figures,'gg_test_margin.png'),height=4,width=9)
 
 
 #############################

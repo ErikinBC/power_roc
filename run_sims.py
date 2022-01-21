@@ -183,16 +183,25 @@ for sens in lst_sens:
 # Merge
 res_power = pd.concat(holder_power).reset_index(drop=True)
 res_power.to_csv('res_power.csv',index=False)
+# res_power = pd.read_csv('res_power.csv')
 res_power.drop(columns=['h0','z','pval','emp','oracle'], inplace=True, errors='ignore')
 cn_gg = ['msr', 'sens', 'n_trial', 'n_test', 'margin', 'method']
-np.all(res_power.groupby(cn_gg).size() == nsim)
-# (i) Calculate the coverage
+assert np.all(res_power.groupby(cn_gg).size() == nsim)
+res_power['msr'] = res_power['msr'].map(di_msr)
+res_power['method'] = res_power['method'].map(di_method)
+# Calculate the coverage
 res_power = res_power.assign(cover=lambda x: (x['power']>x['lb']) & (x['power']<x['ub']))
 res_cover = res_power.groupby(cn_gg)['cover'].sum().reset_index()
 res_cover = get_CI(res_cover, 'cover', nsim)
-# (ii) Compare how expected power lines up to actual
+# Compare how expected power lines up to actual
 res_calib = res_power.groupby(cn_gg)[['power','reject']].sum().reset_index()
 res_calib = get_CI(res_calib, 'reject', nsim).assign(power=lambda x: x['power']/nsim)
+
+# (i) Coverage plot
+res_cover.loc[0]
+
+
+# (ii) Calibration plot
 
 
 

@@ -1,4 +1,11 @@
 __pycache__/
-figures/
 *.csv
 data/
+figures/*
+# Okay to post simulated data
+!figures/gg_roc_tresh.png
+!figures/gg_sens_hist.png
+!figures/gg_sens_scatter.png
+!figures/gg_auc_gt.png
+!figures/gg_roc_gt.png
+!figures/gg_power_margin.png
