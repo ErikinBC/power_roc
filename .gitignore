@@ -9,3 +9,5 @@ figures/*
 !figures/gg_auc_gt.png
 !figures/gg_roc_gt.png
 !figures/gg_power_margin.png
+!figures/gg_cover_bs.png
+!figures/gg_power_calib.png

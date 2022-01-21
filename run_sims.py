@@ -193,16 +193,42 @@ res_power['method'] = res_power['method'].map(di_method)
 res_power = res_power.assign(cover=lambda x: (x['power']>x['lb']) & (x['power']<x['ub']))
 res_cover = res_power.groupby(cn_gg)['cover'].sum().reset_index()
 res_cover = get_CI(res_cover, 'cover', nsim)
-# Compare how expected power lines up to actual
-res_calib = res_power.groupby(cn_gg)[['power','reject']].sum().reset_index()
-res_calib = get_CI(res_calib, 'reject', nsim).assign(power=lambda x: x['power']/nsim)
+res_cover = res_cover.assign(cover=lambda x: x['cover']/nsim)
+# Compare how expected power lines up to actual (independent of method)
+cn_val = ['power','reject']
+res_calib = res_power.groupby(cn_gg)[cn_val].sum().reset_index()
+res_calib = get_CI(res_calib, 'reject', nsim)
+res_calib[cn_val] = res_calib[cn_val] / nsim
+res_calib = res_calib.drop(columns='method').drop_duplicates()
 
 # (i) Coverage plot
-res_cover.loc[0]
+posd = pn.position_dodge(0.5)
+gg_cover_bs = (pn.ggplot(res_cover, pn.aes(x='msr',y='cover',color='method',shape='sens.astype(str)')) + 
+    pn.theme_bw() + pn.labs(y='Coverage') + 
+    pn.ggtitle('Dashed line shows coverage target') + 
+    pn.geom_hline(yintercept=1-alpha,linetype='--') + 
+    pn.geom_point(position=posd) + 
+    pn.geom_linerange(pn.aes(ymin='lb',ymax='ub'),position=posd) + 
+    pn.scale_color_discrete(name='Bootstrap method') + 
+    pn.scale_shape_discrete(name='Sensitivity target') + 
+    pn.theme(legend_position=(0.5,-0.05),legend_direction='horizontal',legend_box='horizontal',axis_title_x=pn.element_blank(), axis_text_x=pn.element_text(angle=90)) + 
+    pn.facet_grid('margin~n_trial+n_test',labeller=pn.label_both))
+gg_cover_bs.save(os.path.join(dir_figures,'gg_cover_bs.png'),height=6,width=16)
 
 
-# (ii) Calibration plot
-
+# (ii) Calibration plot (how well does power formula actually approximate)
+gtit = 'Predicted rejection rate is average of power'
+gg_power_calib = (pn.ggplot(res_calib, pn.aes(x='power',y='reject',color='msr',shape='sens.astype(str)')) + 
+    pn.theme_bw() + pn.geom_point() + pn.ggtitle(gtit) + 
+    pn.geom_abline(slope=1,intercept=0,linetype='--') + 
+    pn.labs(y='Rejection rate (actual)',x='Rejection rate (predicted)') + 
+    pn.facet_grid('margin~n_trial+n_test',labeller=pn.label_both) + 
+    pn.scale_color_discrete(name='Measure') + 
+    pn.scale_shape_discrete(name='Sensitivity target') + 
+    pn.scale_x_continuous(limits=[0,1]) + 
+    pn.scale_y_continuous(limits=[0,1]) + 
+    pn.theme(legend_position=(0.5,-0.05),legend_direction='horizontal',legend_box='horizontal', axis_text_x=pn.element_text(angle=90)))
+gg_power_calib.save(os.path.join(dir_figures,'gg_power_calib.png'),height=5,width=15)
 
 
 ####################################
