@@ -2,8 +2,12 @@ import os
 import numpy as np
 import pandas as pd
 import plotnine as pn
+import patchworklib as pw
+from matplotlib import rc
 from time import time
-from funs_support import makeifnot
+from scipy.stats import skewnorm, norm
+from scipy.optimize import minimize_scalar
+from funs_support import makeifnot, gg_save, grid_save, interp_df
 from funs_stats import dgp_bin, emp_roc_curve, auc_rank, get_CI
 dir_base = os.getcwd()
 dir_figures = os.path.join(dir_base, 'figures')
@@ -12,6 +16,73 @@ makeifnot(dir_figures)
 # Tidy up the different labels
 di_msr = {'sens':'Sensitivity', 'spec':'Specificity', 'thresh':'Threshold'}
 di_method = {'basic':'Basic', 'quantile':'Quantile', 'expanded':'Quantile (t-adj)', 'studentized':'Studentized', 'bca':'BCa'}
+
+
+############################
+# --- (0) ROC EXAMPLES --- #
+
+# Function to approximate one skew normal being larger than another
+def sn_ineq(mu, skew, scale, alpha, n_points):
+    dist_y1 = skewnorm(a=skew, loc=mu, scale=scale)
+    dist_y0 = skewnorm(a=skew, loc=0, scale=scale)
+    x_seq = np.linspace(dist_y0.ppf(alpha), dist_y1.ppf(1-alpha), n_points)
+    dx = x_seq[1] - x_seq[0]
+    prob = np.sum(dist_y0.cdf(x_seq)*dist_y1.pdf(x_seq)*dx)
+    return prob
+
+def find_auroc(auc, skew, scale=1, alpha=0.001, n_points=100):
+    optim = minimize_scalar(fun=lambda mu: (auc - sn_ineq(mu, skew, scale, alpha, n_points))**2,method='brent')
+    assert optim.fun < 1e-10
+    mu_star = optim.x
+    return mu_star
+    
+n1, n0 = 1000, 1000
+labels = np.append(np.repeat(1,n1), np.repeat(0,n0))
+auc_target = 0.75
+skew_seq = [-4, 0, 4]
+di_skew = dict(zip(skew_seq, ['Left-skew','No skew','Right skew']))
+holder_dist, holder_roc = [], []
+np.random.seed(n1)
+for skew in skew_seq:
+    skew_lbl = di_skew[skew]
+    # Find AUROC equivalent mean
+    mu_skew = find_auroc(auc=auc_target, skew=skew)
+    dist_y1 = skewnorm(a=skew, loc=mu_skew, scale=1)
+    dist_y0 = skewnorm(a=skew, loc=0, scale=1)
+    scores = np.append(dist_y1.rvs(n1), dist_y0.rvs(n0))
+    emp_auc = auc_rank(labels, scores)
+    print('Skew = %s, AUROC=%0.3f' % (skew_lbl, emp_auc))
+    df_dist = pd.DataFrame({'skew':skew_lbl,'y':labels, 's':scores})
+    df_roc = emp_roc_curve(labels, scores).assign(skew=skew_lbl)
+    holder_dist.append(df_dist)
+    holder_roc.append(df_roc)
+# Merge
+roc_skew = pd.concat(holder_roc).reset_index(drop=True)
+dist_skew = pd.concat(holder_dist).reset_index(drop=True)
+auroc_skew = dist_skew.groupby('skew').apply(lambda x: auc_rank(x['y'],x['s'])).reset_index()
+auroc_skew.rename(columns={0:'auroc'}, inplace=True)
+
+# (i) Empirical ROC curves and skew
+gg_roc_skew = (pn.ggplot(roc_skew,pn.aes(x='1-spec',y='sens',color='skew')) + 
+    pn.theme_bw() + pn.labs(x='1-Specificity',y='Sensitivity') + 
+    pn.geom_text(pn.aes(x=0.25,y=0.95,label='100*auroc'),size=9,data=auroc_skew,format_string='AUROC={:.1f}%') + 
+    pn.facet_wrap('~skew') + pn.geom_step() + pn.ggtitle('A') + 
+    pn.theme(legend_position='none'))
+# gg_save('gg_roc_skew.png', dir_figures, gg_roc_skew, 9, 3)
+
+# (ii) Empirical score distribution and skew
+gg_dist_skew = (pn.ggplot(dist_skew,pn.aes(x='s',fill='y.astype(str)')) + 
+    pn.theme_bw() + pn.labs(x='Scores',y='Frequency') + 
+    pn.theme(legend_position=(0.3, -0.03), legend_direction='horizontal',legend_box_margin=0) + 
+    pn.facet_wrap('~skew') + pn.ggtitle('B') + 
+    pn.geom_histogram(position='identity',color='black',alpha=0.5,bins=25) + 
+    pn.scale_fill_discrete(name='Label'))
+# gg_save('gg_dist_skew.png', dir_figures, gg_dist_skew, 9, 3.25)
+# Combine both plots
+g1 = pw.load_ggplot(gg_roc_skew, figsize=(9,3))
+g2 = pw.load_ggplot(gg_dist_skew, figsize=(9,3))
+gg_roc_dist_skew = pw.vstack(g2, g1, margin=0.25, adjust=False)
+grid_save('gg_roc_dist_skew.png', dir_figures, gg_roc_dist_skew)
 
 
 ##############################################
@@ -44,7 +115,7 @@ gg_roc_gt = (pn.ggplot(df_roc,pn.aes(x='1-spec',y='sens',size='tt',color='tt',al
     pn.scale_color_manual(name=' ',values=['black','grey']) + 
     pn.scale_alpha_manual(name=' ',values=[1,0.1]) + 
     pn.scale_size_manual(name=' ',values=[2,0.5]))
-gg_roc_gt.save(os.path.join(dir_figures,'gg_roc_gt.png'),height=4,width=6)
+gg_save('gg_roc_gt.png', dir_figures, gg_roc_gt, 5, 3.5)
 
 # (ii) Empirical AUROC to actual
 gg_auc_gt = (pn.ggplot(df_auc,pn.aes(x='auc')) + pn.theme_bw() + 
@@ -52,21 +123,62 @@ gg_auc_gt = (pn.ggplot(df_auc,pn.aes(x='auc')) + pn.theme_bw() +
     pn.geom_vline(pn.aes(xintercept='gt'),color='black') + 
     pn.labs(x='AUROC',y='Frequency') + 
     pn.ggtitle('Black lines show ground truth AUROC'))
-gg_auc_gt.save(os.path.join(dir_figures,'gg_auc_gt.png'),height=4,width=6)
+gg_save('gg_auc_gt.png', dir_figures, gg_auc_gt, 5, 3.5)
 
 # (iii) Operating threshold on x-axis
+sens_target = 0.5
 df_emp_thresh = df_roc.melt(['sim','thresh','tt'], None, 'msr', 'val')
 df_emp_thresh['msr'] = df_emp_thresh['msr'].map(di_msr)
 
-gg_roc_tresh = (pn.ggplot(df_emp_thresh,pn.aes(x='thresh',y='val',size='tt',color='tt',alpha='tt',group='sim')) + 
-    pn.theme_bw() + pn.labs(x='Operating threshold',y='Value') + 
-    pn.ggtitle('Operating threshold curve underlying AUROC') + 
-    pn.geom_step() + pn.facet_wrap('~msr') + 
-    pn.theme(legend_position=(0.5,-0.01),legend_direction='horizontal') + 
+# (a) What threshold is chosen to get to sens_target?
+thresh_sens = df_emp_thresh.query('sim>=0 & msr=="Sensitivity"').drop(columns=['msr','tt'])
+thresh_spec = df_emp_thresh.query('sim>=0 & msr=="Specificity"').drop(columns=['msr','tt'])
+thresh_chosen = interp_df(thresh_sens, 'val', 'thresh', sens_target, 'sim')
+thresh_spec = thresh_spec.merge(thresh_chosen)
+thresh_spec = thresh_spec.groupby('sim').apply(lambda x: interp_df(x, 'thresh', 'val', x['thresh_interp'].values[0], 'sim'))
+thresh_spec.reset_index(drop=True, inplace=True)
+thresh_spec = thresh_spec.rename(columns={'val_interp':'spec'}).assign(msr=di_msr['spec'])
+thresh_chosen = thresh_chosen.rename(columns={'thresh_interp':'thresh'}).assign(msr=di_msr['sens'])
+thresh_spec = thresh_spec.merge(thresh_chosen.drop(columns='msr'))
+# Long-run sensitivity
+thresh_chosen = thresh_chosen.assign(sens=lambda x: 1-norm(loc=mu).cdf(x['thresh']))
+
+# (a) Intersection of thresholds to 50% sensitivity
+gtit = 'A: Empirical threshold choice for %i%% sensivitiy' % (100*sens_target)
+gg_roc_thresh = (pn.ggplot(df_emp_thresh,pn.aes(x='val',y='thresh')) + 
+    pn.theme_bw() + pn.labs(y='Operating threshold',x='Performance target') + 
+    pn.ggtitle(gtit) + pn.facet_wrap('~msr') + 
+    pn.geom_step(pn.aes(size='tt',color='tt',alpha='tt',group='sim')) + 
+    pn.geom_point(pn.aes(x=sens_target,y='thresh'),size=0.5,alpha=0.5,color='red',data=thresh_chosen) + 
+    pn.geom_point(pn.aes(x='spec',y='thresh'),size=0.5,alpha=0.5,color='blue',data=thresh_spec) + 
+    # pn.theme(legend_position=(0.5,-0.05),legend_direction='horizontal') + 
     pn.scale_color_manual(name=' ',values=['black','grey']) + 
-    pn.scale_alpha_manual(name=' ',values=[1,0.1]) + 
+    pn.scale_alpha_manual(name=' ',values=[1,0.2]) + 
     pn.scale_size_manual(name=' ',values=[1.5,0.5]))
-gg_roc_tresh.save(os.path.join(dir_figures,'gg_roc_tresh.png'),height=4,width=10)
+# gg_save('gg_roc_thresh.png', dir_figures, gg_roc_thresh, 9, 3.5)
+
+# (b) Distribution of thresholds
+gg_dist_thresh = (pn.ggplot(thresh_chosen, pn.aes(x='thresh')) + pn.theme_bw() + 
+    pn.geom_histogram(fill='grey',alpha=0.5,color='red',bins=20) + 
+    pn.labs(x='Threshold',y='Frequency',title='B: Threshold distribution'))
+# gg_save('gg_dist_thresh.png', dir_figures, gg_dist_thresh, 4.5, 3.5)
+
+# (c) Distribution of long-run sensitivity
+rc('text', usetex=True)
+gg_dist_sens = (pn.ggplot(thresh_chosen, pn.aes(x='sens')) + pn.theme_bw() + 
+    pn.geom_histogram(fill='grey',alpha=0.5,color='green',bins=20) + 
+    pn.geom_vline(xintercept=sens_target) + 
+    pn.ggtitle('C: Expected sensitivity') + 
+    pn.labs(x='$P(x_{i1} \geq \hat{t})$',y='Frequency'))
+# gg_save('gg_dist_sens.png', dir_figures, gg_dist_sens, 4.5, 3.5)
+rc('text', usetex=False)
+
+g1 = pw.load_ggplot(gg_roc_thresh, figsize=(9,3))
+g2 = pw.load_ggplot(gg_dist_thresh, figsize=(4.5,3.5))
+g3 = pw.load_ggplot(gg_dist_sens, figsize=(4.5,3.5))
+
+gg_roc_process = g1 / (g2 | g3)
+grid_save('gg_roc_process.png', dir_figures, gg_roc_process)
 
 
 ###################################
@@ -272,3 +384,8 @@ gg_power_margin = (pn.ggplot(res_static, pn.aes(x='margin',fill='n_test')) +
 gg_power_margin.save(os.path.join(dir_figures,'gg_power_margin.png'),height=height,width=width)
 
 
+############################
+# --- (5) ROC & POWER  --- #
+
+
+# 3. (i) Oracle ROC curve and power of the trial , (ii) CI around some randomly chosen points -->
