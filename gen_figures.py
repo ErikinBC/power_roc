@@ -4,38 +4,21 @@ import pandas as pd
 import plotnine as pn
 import patchworklib as pw
 from matplotlib import rc
-from time import time
 from scipy.stats import skewnorm, norm
-from scipy.optimize import minimize_scalar
 from funs_support import makeifnot, gg_save, grid_save, interp_df
-from funs_stats import dgp_bin, emp_roc_curve, auc_rank, get_CI
+from funs_stats import dgp_bin, emp_roc_curve, auc_rank, find_auroc
 dir_base = os.getcwd()
 dir_figures = os.path.join(dir_base, 'figures')
 makeifnot(dir_figures)
 
 # Tidy up the different labels
 di_msr = {'sens':'Sensitivity', 'spec':'Specificity', 'thresh':'Threshold'}
-di_method = {'basic':'Basic', 'quantile':'Quantile', 'expanded':'Quantile (t-adj)', 'studentized':'Studentized', 'bca':'BCa'}
+di_tt = {'oracle':'Oracle', 'lb':'Lower-bound CI', 'ub':'Upper-bound CI'}
 
 
 ############################
-# --- (0) ROC EXAMPLES --- #
+# --- (1) ROC EXAMPLES --- #
 
-# Function to approximate one skew normal being larger than another
-def sn_ineq(mu, skew, scale, alpha, n_points):
-    dist_y1 = skewnorm(a=skew, loc=mu, scale=scale)
-    dist_y0 = skewnorm(a=skew, loc=0, scale=scale)
-    x_seq = np.linspace(dist_y0.ppf(alpha), dist_y1.ppf(1-alpha), n_points)
-    dx = x_seq[1] - x_seq[0]
-    prob = np.sum(dist_y0.cdf(x_seq)*dist_y1.pdf(x_seq)*dx)
-    return prob
-
-def find_auroc(auc, skew, scale=1, alpha=0.001, n_points=100):
-    optim = minimize_scalar(fun=lambda mu: (auc - sn_ineq(mu, skew, scale, alpha, n_points))**2,method='brent')
-    assert optim.fun < 1e-10
-    mu_star = optim.x
-    return mu_star
-    
 n1, n0 = 1000, 1000
 labels = np.append(np.repeat(1,n1), np.repeat(0,n0))
 auc_target = 0.75
@@ -86,10 +69,12 @@ grid_save('gg_roc_dist_skew.png', dir_figures, gg_roc_dist_skew)
 
 
 ##############################################
-# --- (1) CHECK EMPIRICAL TO GROUNDTRUTH --- #
+# --- (2) CHECK EMPIRICAL TO GROUNDTRUTH --- #
 
-nsim, n_test = 250, 100
-mu, p = 1, 0.5
+nsim = 250
+n_test = 100
+mu = 1
+p = 0.5
 enc_dgp = dgp_bin(mu=mu, p=p, thresh=mu)
 holder_auc = np.zeros(nsim)
 holder_roc = []
@@ -123,7 +108,7 @@ gg_auc_gt = (pn.ggplot(df_auc,pn.aes(x='auc')) + pn.theme_bw() +
     pn.geom_vline(pn.aes(xintercept='gt'),color='black') + 
     pn.labs(x='AUROC',y='Frequency') + 
     pn.ggtitle('Black lines show ground truth AUROC'))
-gg_save('gg_auc_gt.png', dir_figures, gg_auc_gt, 5, 3.5)
+# gg_save('gg_auc_gt.png', dir_figures, gg_auc_gt, 5, 3.5)
 
 # (iii) Operating threshold on x-axis
 sens_target = 0.5
@@ -168,8 +153,8 @@ rc('text', usetex=True)
 gg_dist_sens = (pn.ggplot(thresh_chosen, pn.aes(x='sens')) + pn.theme_bw() + 
     pn.geom_histogram(fill='grey',alpha=0.5,color='green',bins=20) + 
     pn.geom_vline(xintercept=sens_target) + 
-    pn.ggtitle('C: Expected sensitivity') + 
-    pn.labs(x='$P(x_{i1} \geq \hat{t})$',y='Frequency'))
+    pn.ggtitle('C: Oracle sensitivity') + 
+    pn.labs(x='$\Phi(\mu - \hat{t})$',y='Frequency'))
 # gg_save('gg_dist_sens.png', dir_figures, gg_dist_sens, 4.5, 3.5)
 rc('text', usetex=False)
 
@@ -182,7 +167,7 @@ grid_save('gg_roc_process.png', dir_figures, gg_roc_process)
 
 
 ###################################
-# --- (2) SENSITIVITY TARGET  --- #
+# --- (3) SENSITIVITY TARGET  --- #
 
 # Tidy tt labels
 di_tt = {'oracle':'Oracle', 'emp':'Empirical', 'trial':'Trial'}
@@ -216,7 +201,7 @@ gg_sens_scatter = (pn.ggplot(res_tfpr_wide, pn.aes(x='value',y='Oracle',color='t
     pn.labs(x='Observed',y='Oracle') + 
     pn.geom_point() + pn.geom_abline(slope=1,intercept=0,linetype='--') + 
     pn.facet_wrap('~msr'))
-gg_sens_scatter.save(os.path.join(dir_figures,'gg_sens_scatter.png'),height=4,width=12)
+# gg_sens_scatter.save(os.path.join(dir_figures,'gg_sens_scatter.png'),height=4,width=12)
 
 # (ii) Histogram distribution
 gg_sens_hist = (pn.ggplot(res_tfpr, pn.aes(x='val',fill='tt')) + 
@@ -224,123 +209,7 @@ gg_sens_hist = (pn.ggplot(res_tfpr, pn.aes(x='val',fill='tt')) +
     pn.labs(x='Value',y='Frequency') + 
     pn.geom_histogram(alpha=0.5,color='grey',bins=30,position='identity') + 
     pn.facet_wrap('~msr',scales='free_x'))
-gg_sens_hist.save(os.path.join(dir_figures,'gg_sens_hist.png'),height=4,width=12)
-
-
-##################################
-# --- (3) POWER SIMULATIONS  --- #
-
-mu, p = 1, 0.5
-n_test, n_trial = 400, 400
-n_bs, alpha = 1000, 0.05
-sens = 0.5
-nsim = 2500
-
-# TEST OVER RANGES OF SENSITIVITY/SPECIFCITY/SAMPLE SIZE
-lst_sens = [0.5, 0.6, 0.7]
-lst_n_test = [250, 500, 1000]
-lst_n_trial = [250, 500, 1000]
-lst_margin = [0.025, 0.050, 0.075]
-lst_hp = [lst_sens, lst_n_test, lst_n_trial, lst_margin]
-n_hp = np.prod([len(l) for l in lst_hp])
-
-stime = time()
-holder_power = []
-j = 0
-for sens in lst_sens:
-    enc_dgp = dgp_bin(mu=mu, p=p, sens=sens, alpha=alpha)
-    for n_trial in lst_n_trial:
-        for n_test in lst_n_test:
-            for margin in lst_margin:
-                j += 1
-                for i in range(nsim):
-                    a = None
-                    # (i) Generate data (going to to use oracle n1, n0)
-                    dat_test = enc_dgp.dgp_bin(n=n_test, seed=i)
-                    dat_trial = enc_dgp.dgp_bin(n=n_trial, seed=i+1)
-                    n0_trial, n1_trial = dat_trial['y'].value_counts().sort_index()
-
-                    # (ii) Learn threshold on sensitivity target and estimate power
-                    enc_dgp.learn_threshold(y=dat_test['y'], s=dat_test['s'])
-                    enc_dgp.create_df()
-                    null_sens = enc_dgp.sens_emp - margin
-                    null_spec = enc_dgp.spec_emp - margin
-                    enc_dgp.set_null_hypotheis(null_sens, null_spec)
-                    enc_dgp.run_power(n1_trial, n0_trial, method=None, seed=i, n_bs=n_bs)
-                    
-                    # (iii) Run hypothesis test
-                    vec_msr = ['sens', 'spec']
-                    vec_act = enc_dgp.get_tptn(y=dat_trial['y'],s=dat_trial['s']).values.flatten()
-                    vec_null = np.array([null_sens, null_spec])
-                    vec_n = np.array([n1_trial, n0_trial])    
-                    res_trial = enc_dgp.binom_stat(p_act=vec_act, p_null=vec_null, n=vec_n)
-                    res_trial.insert(0, 'msr', vec_msr)
-
-                    # (iv) Store
-                    res_i = enc_dgp.df_power.merge(res_trial)
-                    res_i = res_i.merge(enc_dgp.df_rv.pivot('msr','tt','val').reset_index(),'left')
-                    # Add on hyperparameters
-                    res_i = res_i.assign(sens=sens, n_trial=n_trial, n_test=n_test, margin=margin, sim=i)
-                    holder_power.append(res_i)
-
-                    # Run-time update
-                    if (i + 1) % 100 == 0:
-                        dtime = time() - stime
-                        n_left = (n_hp-j)*nsim + (nsim-(i+1))
-                        n_run = (j-1)*nsim + (i+1)
-                        srate = n_run/dtime
-                        seta = n_left / srate
-                        meta = seta / 60
-                        print('Iteration %i/%i for param %i of %i (ETA: %i seconds, %0.1f minutes)' % (i+1, nsim, j, n_hp, seta, meta))
-# Merge
-res_power = pd.concat(holder_power).reset_index(drop=True)
-res_power.to_csv('res_power.csv',index=False)
-# res_power = pd.read_csv('res_power.csv')
-res_power.drop(columns=['h0','z','pval','emp','oracle'], inplace=True, errors='ignore')
-cn_gg = ['msr', 'sens', 'n_trial', 'n_test', 'margin', 'method']
-assert np.all(res_power.groupby(cn_gg).size() == nsim)
-res_power['msr'] = res_power['msr'].map(di_msr)
-res_power['method'] = res_power['method'].map(di_method)
-# Calculate the coverage
-res_power = res_power.assign(cover=lambda x: (x['power']>x['lb']) & (x['power']<x['ub']))
-res_cover = res_power.groupby(cn_gg)['cover'].sum().reset_index()
-res_cover = get_CI(res_cover, 'cover', nsim)
-res_cover = res_cover.assign(cover=lambda x: x['cover']/nsim)
-# Compare how expected power lines up to actual (independent of method)
-cn_val = ['power','reject']
-res_calib = res_power.groupby(cn_gg)[cn_val].sum().reset_index()
-res_calib = get_CI(res_calib, 'reject', nsim)
-res_calib[cn_val] = res_calib[cn_val] / nsim
-res_calib = res_calib.drop(columns='method').drop_duplicates()
-
-# (i) Coverage plot
-posd = pn.position_dodge(0.5)
-gg_cover_bs = (pn.ggplot(res_cover, pn.aes(x='msr',y='cover',color='method',shape='sens.astype(str)')) + 
-    pn.theme_bw() + pn.labs(y='Coverage') + 
-    pn.ggtitle('Dashed line shows coverage target') + 
-    pn.geom_hline(yintercept=1-alpha,linetype='--') + 
-    pn.geom_point(position=posd) + 
-    pn.geom_linerange(pn.aes(ymin='lb',ymax='ub'),position=posd) + 
-    pn.scale_color_discrete(name='Bootstrap method') + 
-    pn.scale_shape_discrete(name='Sensitivity target') + 
-    pn.theme(legend_position=(0.5,-0.05),legend_direction='horizontal',legend_box='horizontal',axis_title_x=pn.element_blank(), axis_text_x=pn.element_text(angle=90)) + 
-    pn.facet_grid('margin~n_trial+n_test',labeller=pn.label_both))
-gg_cover_bs.save(os.path.join(dir_figures,'gg_cover_bs.png'),height=6,width=16)
-
-
-# (ii) Calibration plot (how well does power formula actually approximate)
-gtit = 'Predicted rejection rate is average of power'
-gg_power_calib = (pn.ggplot(res_calib, pn.aes(x='power',y='reject',color='msr',shape='sens.astype(str)')) + 
-    pn.theme_bw() + pn.geom_point() + pn.ggtitle(gtit) + 
-    pn.geom_abline(slope=1,intercept=0,linetype='--') + 
-    pn.labs(y='Rejection rate (actual)',x='Rejection rate (predicted)') + 
-    pn.facet_grid('margin~n_trial+n_test',labeller=pn.label_both) + 
-    pn.scale_color_discrete(name='Measure') + 
-    pn.scale_shape_discrete(name='Sensitivity target') + 
-    pn.scale_x_continuous(limits=[0,1]) + 
-    pn.scale_y_continuous(limits=[0,1]) + 
-    pn.theme(legend_position=(0.5,-0.05),legend_direction='horizontal',legend_box='horizontal', axis_text_x=pn.element_text(angle=90)))
-gg_power_calib.save(os.path.join(dir_figures,'gg_power_calib.png'),height=5,width=15)
+# gg_sens_hist.save(os.path.join(dir_figures,'gg_sens_hist.png'),height=4,width=12)
 
 
 ####################################
@@ -356,15 +225,17 @@ holder_static = []
 for n_test in lst_n_test:
     dat_test = enc_dgp.dgp_bin(n=n_test, seed=1)
     enc_dgp.learn_threshold(y=dat_test['y'], s=dat_test['s'])
-    for margin in lst_margin:
-        null_sens = enc_dgp.sens_emp - margin
-        null_spec = enc_dgp.spec_emp - margin
-        for n_trial in lst_n_trial:
-            n1_trial, n0_trial = n_trial, n_trial
-            enc_dgp.set_null_hypotheis(null_sens, null_spec)
-            enc_dgp.run_power(n1_trial, n0_trial, method=method, seed=1, n_bs=1000)
-            tmp_df = enc_dgp.df_power.assign(margin=margin, n_test=n_test)
-            holder_static.append(tmp_df)
+    df_emp = pd.DataFrame({'msr':['sens','spec'], 'emp':[enc_dgp.sens_emp, enc_dgp.spec_emp]})
+    null_sens = enc_dgp.sens_emp - lst_margin
+    null_spec = enc_dgp.spec_emp - lst_margin
+    enc_dgp.set_null_hypotheis(null_sens, null_spec)
+    for n_trial in lst_n_trial:
+        n1_trial, n0_trial = n_trial, n_trial        
+        enc_dgp.run_power('both', n1_trial, n0_trial, method, seed=1, n_bs=1000)
+        # Calculate the margin
+        tmp_df = enc_dgp.df_power.merge(df_emp).assign(n_test=n_test)
+        tmp_df = tmp_df.assign(margin=lambda x: x['emp'] - x['h0'])
+        holder_static.append(tmp_df)
 # Merge and plot
 res_static = pd.concat(holder_static).reset_index(drop=True)
 cn_ns = ['n_trial', 'n_test']
@@ -387,5 +258,52 @@ gg_power_margin.save(os.path.join(dir_figures,'gg_power_margin.png'),height=heig
 ############################
 # --- (5) ROC & POWER  --- #
 
+n = 100
+n1_trial, n0_trial = 50, 50
+method, n_bs = 'quantile', 1000
+seed = 1
+enc_dgp = dgp_bin(mu=1, p=0.5, thresh=0)
 
-# 3. (i) Oracle ROC curve and power of the trial , (ii) CI around some randomly chosen points -->
+# (i) Generate data
+dat_i = enc_dgp.dgp_bin(n, seed=seed)
+t_lo, t_high = dat_i['s'].describe()[['min','max']]
+thresh_seq = np.linspace(t_lo, t_high, 100)
+
+# (ii) Get power
+holder_thresh, holder_power = [], []
+for j, thresh in enumerate(thresh_seq):
+    # (i) Manually assign threshold
+    enc_dgp.thresh_oracle = thresh
+    enc_dgp.learn_threshold(dat_i['y'], dat_i['s'])
+    null_sens = np.linspace(0.01, enc_dgp.sens_emp, 100)[:-1]
+    null_spec = np.linspace(0.01, enc_dgp.spec_emp, 100)[:-1]
+    enc_dgp.set_null_hypotheis(null_sens, null_spec)
+    # (ii) Empirically interpolated threshold
+    lst_sens = [enc_dgp.sens_emp, enc_dgp.sens_oracle]
+    lst_spec = [enc_dgp.spec_emp, enc_dgp.spec_oracle]
+    lst_oracle = ['Empirical', 'Oracle']
+    res_thresh = pd.DataFrame({'thresh':thresh, 'boundary':lst_oracle, 'sens':lst_sens, 'spec':lst_spec})
+    holder_thresh.append(res_thresh)
+    # (iii) Power range
+    enc_dgp.run_power('both', n1_trial, n0_trial, method, seed=seed, n_bs=n_bs)
+    res_j = enc_dgp.df_power.assign(thresh=thresh)
+    res_j.drop(columns=['method','n_trial'], inplace=True)
+    holder_power.append(res_j)
+# Merge and plot
+df_thresh = pd.concat(holder_thresh).melt(['thresh','boundary'],None,'msr')
+df_power = pd.concat(holder_power).rename(columns={'power':'oracle'})
+df_power = df_power.melt(['msr','h0','thresh'],['oracle','lb','ub'],'tt','power')
+
+
+# (i) Plot the trade-off curve
+gg_thresh_power = (pn.ggplot(df_power,pn.aes(x='thresh',y='h0',color='power')) + 
+    pn.theme_bw() + pn.geom_point(alpha=0.5) + 
+    pn.labs(x='Operating threshold',y='Null hypothesis') + 
+    pn.facet_grid('msr~tt',labeller=pn.labeller(tt=di_tt,msr=di_msr)) + 
+    pn.ggtitle('Black line shows empirical operating threshold and performance') + 
+    pn.geom_line(pn.aes(x='thresh',y='value', linetype='boundary'), data=df_thresh, inherit_aes=False,size=1.0) + 
+    pn.scale_linetype_discrete(name='Boundary') + 
+    pn.scale_color_gradient2(name='Power',low='blue',mid='grey',high='red',midpoint=0.25))
+gg_save('gg_thresh_power.png', dir_figures, gg_thresh_power, 9, 6)
+
+print('~~~ End of gen_figures.py ~~~')
