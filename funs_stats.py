@@ -212,6 +212,7 @@ class dgp_bin():
     """
     Return the z-statistic and p-value of a (series) of tests
     """
+    # p_act=vec_act; p_null=vec_null; n=vec_n
     def binom_stat(self, p_act, p_null, n, alpha=None):
         t_alpha = self.t_alpha
         if alpha is not None:
@@ -219,9 +220,10 @@ class dgp_bin():
         sigma_null = np.sqrt(p_null*(1-p_null)/n)
         z_test = (p_act - p_null) / sigma_null
         # One-sided test
-        p_test = pd.Series(1 - norm.cdf(z_test))
+        p_test = 1 - norm.cdf(z_test)
         reject = np.where(z_test > t_alpha, 1, 0)
-        res = pd.DataFrame({'z':z_test, 'pval':p_test, 'reject':reject}, index=p_test.index)
+        idx = range(len(p_test))
+        res = pd.DataFrame({'z':z_test, 'pval':p_test, 'reject':reject}, index=idx)
         return res
 
     @staticmethod

@@ -22,14 +22,16 @@ n_test, n_trial = 400, 400
 n_bs, alpha = 1000, 0.05
 sens = 0.5
 nsim = 2500
+method = 'quantile'
 
 # TEST OVER RANGES OF SENSITIVITY/SPECIFCITY/SAMPLE SIZE
 lst_sens = [0.5, 0.6, 0.7]
 lst_n_test = [250, 500, 1000]
 lst_n_trial = [250, 500, 1000]
-lst_margin = [0.025, 0.050, 0.075]
-lst_hp = [lst_sens, lst_n_test, lst_n_trial, lst_margin]
+lst_hp = [lst_sens, lst_n_test, lst_n_trial]
 n_hp = np.prod([len(l) for l in lst_hp])
+
+lst_margin = np.array([0.025, 0.050, 0.075])
 
 stime = time()
 holder_power = []
@@ -38,47 +40,48 @@ for sens in lst_sens:
     enc_dgp = dgp_bin(mu=mu, p=p, sens=sens, alpha=alpha)
     for n_trial in lst_n_trial:
         for n_test in lst_n_test:
-            for margin in lst_margin:
-                j += 1
-                for i in range(nsim):
-                    a = None
-                    # (i) Generate data (going to to use oracle n1, n0)
-                    dat_test = enc_dgp.dgp_bin(n=n_test, seed=i)
-                    dat_trial = enc_dgp.dgp_bin(n=n_trial, seed=i+1)
-                    n0_trial, n1_trial = dat_trial['y'].value_counts().sort_index()
+            j += 1
+            for i in range(nsim):
+                a = None
+                # (i) Generate data (going to to use oracle n1, n0)
+                dat_test = enc_dgp.dgp_bin(n=n_test, seed=i)
+                dat_trial = enc_dgp.dgp_bin(n=n_trial, seed=i+1)
+                n0_trial, n1_trial = dat_trial['y'].value_counts().sort_index()
 
-                    # (ii) Learn threshold on sensitivity target and estimate power
-                    enc_dgp.learn_threshold(y=dat_test['y'], s=dat_test['s'])
-                    enc_dgp.create_df()
-                    null_sens = enc_dgp.sens_emp - margin
-                    null_spec = enc_dgp.spec_emp - margin
-                    enc_dgp.set_null_hypotheis(null_sens, null_spec)
-                    enc_dgp.run_power(n1_trial, n0_trial, method=None, seed=i, n_bs=n_bs)
-                    
-                    # (iii) Run hypothesis test
-                    vec_msr = ['sens', 'spec']
-                    vec_act = enc_dgp.get_tptn(y=dat_trial['y'],s=dat_trial['s']).values.flatten()
-                    vec_null = np.array([null_sens, null_spec])
-                    vec_n = np.array([n1_trial, n0_trial])    
-                    res_trial = enc_dgp.binom_stat(p_act=vec_act, p_null=vec_null, n=vec_n)
-                    res_trial.insert(0, 'msr', vec_msr)
+                # (ii) Learn threshold on sensitivity target and estimate power
+                enc_dgp.learn_threshold(y=dat_test['y'], s=dat_test['s'])
+                enc_dgp.create_df()
+                null_sens = enc_dgp.sens_emp - lst_margin
+                null_spec = enc_dgp.spec_emp - lst_margin
+                enc_dgp.set_null_hypotheis(null_sens, null_spec)
+                enc_dgp.run_power('both', n1_trial, n0_trial, method, seed=i, n_bs=n_bs)
+                
+                # (iii) Run hypothesis test
+                vec_msr = ['sens', 'spec']
+                sens_act, spec_act = enc_dgp.get_tptn(y=dat_trial['y'],s=dat_trial['s']).values.flatten()
+                tmp1 = enc_dgp.binom_stat(sens_act, null_sens, n1_trial).assign(msr='sens')
+                tmp2 = enc_dgp.binom_stat(spec_act, null_spec, n0_trial).assign(msr='spec')
+                res_trial = pd.concat(objs=[tmp1, tmp2], axis=0)
 
-                    # (iv) Store
-                    res_i = enc_dgp.df_power.merge(res_trial)
-                    res_i = res_i.merge(enc_dgp.df_rv.pivot('msr','tt','val').reset_index(),'left')
-                    # Add on hyperparameters
-                    res_i = res_i.assign(sens=sens, n_trial=n_trial, n_test=n_test, margin=margin, sim=i)
-                    holder_power.append(res_i)
+                # (iv) Store
+                res_i = enc_dgp.df_power.merge(res_trial)
+                res_i = res_i.merge(enc_dgp.df_rv.pivot('msr','tt','val').reset_index(),'left')
+                # Add on hyperparameters
+                res_i = res_i.assign(sens=sens, n_trial=n_trial, n_test=n_test, sim=i)
+                tmp1 = pd.DataFrame({'msr':'sens', 'margin':lst_margin, 'h0':null_sens})
+                tmp2 = pd.DataFrame({'msr':'spec', 'margin':lst_margin, 'h0':null_spec})
+                res_i = res_i.merge(pd.concat(objs=[tmp1, tmp2], axis=0))
+                holder_power.append(res_i)
 
-                    # Run-time update
-                    if (i + 1) % 100 == 0:
-                        dtime = time() - stime
-                        n_left = (n_hp-j)*nsim + (nsim-(i+1))
-                        n_run = (j-1)*nsim + (i+1)
-                        srate = n_run/dtime
-                        seta = n_left / srate
-                        meta = seta / 60
-                        print('Iteration %i/%i for param %i of %i (ETA: %i seconds, %0.1f minutes)' % (i+1, nsim, j, n_hp, seta, meta))
+                # Run-time update
+                if (i + 1) % 100 == 0:
+                    dtime = time() - stime
+                    n_left = (n_hp-j)*nsim + (nsim-(i+1))
+                    n_run = (j-1)*nsim + (i+1)
+                    srate = n_run/dtime
+                    seta = n_left / srate
+                    meta = seta / 60
+                    print('Iteration %i/%i for param %i of %i (ETA: %i seconds, %0.1f minutes)' % (i+1, nsim, j, n_hp, seta, meta))
 # Merge
 res_power = pd.concat(holder_power).reset_index(drop=True)
 res_power.to_csv('res_power.csv',index=False)
