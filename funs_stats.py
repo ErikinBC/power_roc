@@ -33,29 +33,18 @@ def auc_rank(y, s):
     return auc
 
 # SKLearn wrapper to calculate empirical ROC
-# y=test_i['y'];s=test_i['s']
-def emp_roc_curve(y, s):
+def emp_roc_curve(y, s, n_points=100, tol=1e-10):
+    # dat_test=df_scores.query('ds=="iowa"')
+    # y=dat_test['y']; s=dat_test['s']; n_points=100; tol=1e-10
     s1, s0 = s[y == 1], s[y == 0]
-    s1 = np.flip(np.sort(np.unique(s1)))
+    s1 = np.sort(np.unique(s1))
     s0 = np.sort(np.unique(s0))
-    n1, n0 = len(s1), len(s0)
-    # (i) Calculate empirical sensitivity
-    df_sens = pd.DataFrame({'val':(np.arange(n1)+1)/n1,'thresh':s1, 'tt':'sens'})
-    t1, t2 = df_sens['thresh'].head(2).values
-    # Assumes different in smallest and second smallest threshold will be the next score
-    df_sens = df_sens.append(pd.Series({'val':0, 'thresh':2*t1-t2, 'tt':'sens'}),ignore_index=True)
-    # (ii) Calculate empirical specificity
-    df_spec = pd.DataFrame({'val':np.arange(n0)/n0,'thresh':s0, 'tt':'spec'})
-    t1, t2 = df_spec['thresh'].tail(2).values
-    df_spec = df_spec.append(pd.Series({'val':1, 'thresh':2*t2-t1, 'tt':'spec'}),ignore_index=True)
-    # Merge and fill missing
-    res = pd.concat(objs=[df_sens, df_spec],axis=0)
-    res = res.pivot('thresh','tt','val').reset_index()
-    # Assumes that positive score has largest, and negative score has smallest
-    if not np.isnan(res['sens'][0]) & np.isnan(res['spec'].values[-1]):
-        print('Warning: positive score does not have largest or negative score does not have smallest!')
-    res['sens'] = res['sens'].fillna(method='bfill')
-    res['spec'] = res['spec'].fillna(method='ffill')
+    thresh_seq = np.flip(np.sort(np.append(s1, s0)))
+    # Get range of sensitivity and specificity
+    sens = [np.mean(s1 >= thresh) for thresh in thresh_seq]
+    spec = [np.mean(s0 < thresh) for thresh in thresh_seq]
+    # Store
+    res = pd.DataFrame({'thresh':thresh_seq, 'sens':sens, 'spec':spec})
     return res
 
 # Add on CIs to a dataframe

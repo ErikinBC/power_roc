@@ -1,5 +1,4 @@
 # Script for real-world data
-
 import os
 import numpy as np
 import pandas as pd
@@ -19,6 +18,7 @@ di_msr = {'sens':'Sensitivity', 'spec':'Specificity', 'thresh':'Threshold'}
 di_ds = {'test':'Test','hsk':'HSK', 'stan':'Stanford', 'iowa':'Iowa'}
 di_metric = {'pval':'P-value', 'stat':'Statistic', 'z':'Z-score'}
 lst_msr = ['sens','spec']
+
 
 #########################
 # --- (1) LOAD DATA --- #
@@ -41,6 +41,7 @@ dat_trial = df_scores.query('ds !=@ds_test').reset_index(drop=True)
 # Get the n counts
 df_n_ds = df_scores.groupby(['ds','y']).size().reset_index().rename(columns={0:'n'})
 print(df_n_ds.sort_values('y'))
+
 
 ###############################
 # --- (3) ROC CALIBRATION --- #
@@ -66,7 +67,7 @@ gg_roc_test = (pn.ggplot(df_roc_test,pn.aes(x='1-spec',y='sens',size='tt',color=
     pn.scale_color_manual(name=' ',values=['black','grey']) + 
     pn.scale_alpha_manual(name=' ',values=[1,0.1]) + 
     pn.scale_size_manual(name=' ',values=[2,0.5]))
-gg_roc_test.save(os.path.join(dir_figures,'gg_roc_test.png'),height=4,width=6)
+gg_roc_test.save(os.path.join(dir_figures,'gg_roc_test.png'),height=3.5,width=4.5)
 
 
 # (ii) Range of operating threshold curves
@@ -77,11 +78,11 @@ gg_thresh_test = (pn.ggplot(df_thresh_test,pn.aes(x='thresh',y='val',size='tt',c
     pn.theme_bw() + pn.labs(x='Operating threshold',y='Value') + 
     pn.ggtitle('Operating threshold curve underlying AUROC') + 
     pn.geom_step() + pn.facet_wrap('~msr') + 
-    pn.theme(legend_position=(0.5,-0.04),legend_direction='horizontal') + 
+    pn.theme(legend_position=(0.5,-0.06),legend_direction='horizontal') + 
     pn.scale_color_manual(name=' ',values=['black','grey']) + 
     pn.scale_alpha_manual(name=' ',values=[1,0.1]) + 
     pn.scale_size_manual(name=' ',values=[1.5,0.5]))
-gg_thresh_test.save(os.path.join(dir_figures,'gg_thresh_test.png'),height=4,width=10)
+gg_thresh_test.save(os.path.join(dir_figures,'gg_thresh_test.png'),height=3.5,width=9)
 
 # (iii) How normally distributed are logits?
 gg_logits_ds = (pn.ggplot(df_scores,pn.aes(x='logits',fill='y.astype(str)')) + 
@@ -124,7 +125,7 @@ gg_thresh_ds = (pn.ggplot(df_thresh_ds,pn.aes(x='thresh',y='val',size='tt',color
     pn.theme_bw() + pn.labs(x='Operating threshold',y='Value') + 
     pn.ggtitle('Operating threshold curve underlying AUROC') + 
     pn.geom_step() + pn.facet_grid('ds~msr') + 
-    pn.theme(legend_position=(0.5,-0.01),legend_direction='horizontal') + 
+    pn.theme(legend_position=(0.5,-0.0),legend_direction='horizontal') + 
     pn.scale_color_manual(name=' ',values=['black','grey']) + 
     pn.scale_alpha_manual(name=' ',values=[1,0.1]) + 
     pn.scale_size_manual(name=' ',values=[1.5,0.5]))
@@ -153,18 +154,21 @@ n_prop_seq = np.array([1/3, 2/3, 3/3])
 n1_trial_seq = (round_up(n1_max, n_lb)*n_prop_seq).astype(int)
 n0_trial_seq = (round_up(n0_max, n_lb)*n_prop_seq).astype(int)
 
-holder_margin = []
-for margin in lst_margin:
-    null_sens = enc_test.sens_emp - margin
-    null_spec = enc_test.spec_emp - margin    
-    enc_test.set_null_hypotheis(null_sens, null_spec)
-    for n1, n0 in zip(n1_trial_seq, n0_trial_seq):
-        n1, n0 = int(n1), int(n0)
-        enc_test.run_power(n1_trial=n1, n0_trial=n0, method='quantile')
-        tmp_df = enc_test.df_power.drop(columns=['method','power','h0'])
-        tmp_df = tmp_df.assign(margin=margin)
-        holder_margin.append(tmp_df)
-res_test_margin = pd.concat(holder_margin).reset_index(drop=True)
+null_sens = enc_test.sens_emp - lst_margin
+null_spec = enc_test.spec_emp - lst_margin
+tmp1 = pd.DataFrame({'msr':'sens', 'margin':lst_margin, 'h0':null_sens})
+tmp2 = pd.DataFrame({'msr':'spec', 'margin':lst_margin, 'h0':null_spec})
+df_margin = pd.concat(objs=[tmp1, tmp2])
+
+enc_test.set_null_hypotheis(null_sens, null_spec)
+holder_n = []
+for n1, n0 in zip(n1_trial_seq, n0_trial_seq):
+    n1, n0 = int(n1), int(n0)
+    enc_test.run_power('both', n1_trial=n1, n0_trial=n0, method='quantile')
+    tmp_df = enc_test.df_power.drop(columns=['method','power'])
+    tmp_df= tmp_df.merge(df_margin)
+    holder_n.append(tmp_df)
+res_test_margin = pd.concat(holder_n).reset_index(drop=True)
 res_test_margin['n_trial'] = pd.Categorical(res_test_margin['n_trial'])
 
 gg_test_margin = (pn.ggplot(res_test_margin, pn.aes(x='margin',fill='n_trial')) + 
@@ -218,8 +222,8 @@ for ds in lst_ds:
             n0_frac, n1_frac = dat_ds_frac['y'].value_counts().sort_index().values
             n0_frac, n1_frac = int(n0_frac), int(n1_frac)
             # (i) Calculate expected power at this sample size
-            enc_test.run_power(n1_trial=n1_frac, n0_trial=n0_frac, method='quantile')
-            tmp_power_frac = enc_test.df_power.drop(columns=['power','method','h0'])
+            enc_test.run_power('both', n1_trial=n1_frac, n0_trial=n0_frac, method='quantile')
+            tmp_power_frac = enc_test.df_power.drop(columns=['power','method'])
             # (ii) Calculate actual test statistics
             p_act_frac = enc_test.get_tptn(dat_ds_frac['y'], dat_ds_frac['s'])
             p_act_frac = p_act_frac.values.flatten()
@@ -232,7 +236,7 @@ for ds in lst_ds:
             holder_ds.append(tmp_frac_stat)
 # Merge and clean
 res_sim_trial = pd.concat(holder_ds).reset_index(drop=True)
-cn_gg = ['ds','msr','frac','n_trial','lb','ub']
+cn_gg = ['ds','msr','frac','n_trial','lb','ub','h0']
 cn_val = list(res_sim_trial.columns.drop(cn_gg))
 assert np.all(res_sim_trial.groupby(cn_gg).size() == nsim)
 # Calculate the 95% range across fractions
@@ -263,7 +267,7 @@ tmp1 = tmp1.drop_duplicates().assign(metric='Type-II error')
 tmp1['tt'] = tmp1['tt'].str.replace('beta_','',regex=False)
 tmp1 = tmp1.pivot_table('value',grp1+['metric'],'tt').reset_index()
 tmp2 = res_ci_trial.drop(columns=['beta_lb','beta_ub'])
-tmp_df = pd.concat(objs=[tmp1, tmp2],axis=0)
+tmp_df = pd.concat(objs=[tmp1, tmp2],axis=0).reset_index(drop=True)
 
 colz = ["#F8766D","#619CFF","#00BA38"]
 gg_trial_sim = (pn.ggplot(tmp_df,pn.aes(x='frac',y='med',color='metric',fill='metric')) + 
