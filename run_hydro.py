@@ -16,7 +16,7 @@ nsim = 250
 alpha = 0.05
 di_msr = {'sens':'Sensitivity', 'spec':'Specificity', 'thresh':'Threshold'}
 di_ds = {'test':'Test','hsk':'HSK', 'stan':'Stanford', 'iowa':'Iowa'}
-di_metric = {'pval':'P-value', 'stat':'Statistic', 'z':'Z-score'}
+di_metric = {'pval':'P-value', 'stat':'Statistic', 't2e':'Type-II (error)', 'Power':'Power'}
 lst_msr = ['sens','spec']
 
 
@@ -199,7 +199,9 @@ di_alpha = dict(zip(lst_alpha, ['lb','med','ub']))
 
 # Simulated the range of sensitivity/specificities through random patient order
 nsim = 100
+lst_frac = np.arange(0.25, 1.01, 0.05).round(2)
 lst_ds = ['stan', 'iowa', 'hsk']
+cn_q = ['pval','stat']
 holder_ds = []
 for ds in lst_ds:
     print('--- Dataset: %s ---' % di_ds[ds])
@@ -207,52 +209,36 @@ for ds in lst_ds:
     n0_ds, n1_ds = dat_ds['y'].value_counts().sort_index().values
     n0_ds, n1_ds = int(n0_ds), int(n1_ds)
     # Run the statistical test over a simulated silent trial
-    lst_frac = np.arange(0.25, 1.01, 0.05).round(2)
-    for j in range(nsim):
-        if (j+1) % 10 == 0:
-            print('Simulation %i of %i' % (j+1, nsim))
-        # Shuffle the rows of the data
-        dat_ds_rand = dat_ds.sample(frac=1,random_state=j,replace=False)
-        # Index the patients (groupby label to preserve balance)
-        dat_ds_rand['idx'] = dat_ds_rand.groupby('y').cumcount()+1
-        dat_ds_rand = dat_ds_rand.reset_index(drop=True).rename_axis('idt').reset_index()
-        dat_ds_rand = dat_ds_rand.merge(df_n_ds).assign(idx=lambda x: x['idx']/x['n'])
-        for frac in lst_frac:
-            dat_ds_frac = dat_ds_rand.query('idx <= @frac')
-            n0_frac, n1_frac = dat_ds_frac['y'].value_counts().sort_index().values
-            n0_frac, n1_frac = int(n0_frac), int(n1_frac)
-            # (i) Calculate expected power at this sample size
-            enc_test.run_power('both', n1_trial=n1_frac, n0_trial=n0_frac, method='quantile')
-            tmp_power_frac = enc_test.df_power.drop(columns=['power','method'])
-            # (ii) Calculate actual test statistics
+    for frac in lst_frac:
+        n0_frac, n1_frac = int(n0_ds*frac), int(n1_ds*frac)
+        # (i) Calculate expected power at this sample size
+        enc_test.run_power('both', n1_trial=n1_frac, n0_trial=n0_frac, method='quantile')
+        tmp_power_frac = enc_test.df_power.drop(columns=['power','method','h0','n_trial'])
+        # Make into type-2 error
+        tmp_power_frac = tmp_power_frac.assign(lb1=lambda x: 1-x['ub'], ub1=lambda x: 1-x['lb'])
+        tmp_power_frac = tmp_power_frac.drop(columns=['lb','ub']).rename(columns={'lb1':'lb','ub1':'ub'}).assign(metric='t2e')
+        # (ii) Bootstrap actual test statistics
+        n_vec_frac = np.array([n1_frac, n0_frac])
+        holder_sim = []
+        for i in range(nsim):
+            dat_ds_frac= dat_ds.sample(frac=frac, replace=True, random_state=i)
             p_act_frac = enc_test.get_tptn(dat_ds_frac['y'], dat_ds_frac['s'])
             p_act_frac = p_act_frac.values.flatten()
-            n_vec_frac = np.array([n1_frac, n0_frac])
             tmp_frac_stat = enc_test.binom_stat(p_act=p_act_frac, p_null=vec_null, n=n_vec_frac)
             tmp_frac_stat = tmp_frac_stat.assign(msr=lst_msr).drop(columns='reject')
-            tmp_frac_stat = tmp_frac_stat.assign(stat=p_act_frac, frac=frac, sim=j, ds=ds)
-            # (iii) Merge and store
-            tmp_frac_stat = tmp_frac_stat.merge(tmp_power_frac)
-            holder_ds.append(tmp_frac_stat)
+            tmp_frac_stat = tmp_frac_stat.assign(stat=p_act_frac).assign(sim=i)
+            holder_sim.append(tmp_frac_stat)
+        tmp_sim = pd.concat(holder_sim).groupby('msr')[cn_q].quantile(lst_alpha).reset_index()
+        tmp_sim = tmp_sim.melt(['msr','level_1'],None,'metric')
+        tmp_sim = tmp_sim.pivot_table('value',['msr','metric'],'level_1')
+        tmp_sim = tmp_sim.rename(columns=di_alpha).reset_index()
+
+        # (iii) Merge and store
+        tmp_frac_stat = pd.concat(objs=[tmp_power_frac, tmp_sim], axis=0).assign(frac=frac, ds=ds)
+        holder_ds.append(tmp_frac_stat)
 # Merge and clean
 res_sim_trial = pd.concat(holder_ds).reset_index(drop=True)
-cn_gg = ['ds','msr','frac','n_trial','lb','ub','h0']
-cn_val = list(res_sim_trial.columns.drop(cn_gg))
-assert np.all(res_sim_trial.groupby(cn_gg).size() == nsim)
-# Calculate the 95% range across fractions
-res_ci_trial = res_sim_trial.groupby(cn_gg)[cn_val].quantile(lst_alpha).reset_index()
-res_ci_trial.rename(columns={'level_%s'%len(cn_gg):'tt'},inplace=True)
-# To avoid confusion, make lower and upper bound estimates of power into type-2 errors
-res_ci_trial = res_ci_trial.assign(beta_lb=lambda x: 1-x['ub'], beta_ub=lambda x: 1-x['lb'])
-res_ci_trial.drop(columns=['lb','ub'],inplace=True)
-cn_gg = res_ci_trial.columns.drop(cn_val)
-res_ci_trial = res_ci_trial.melt(cn_gg,cn_val,'metric','val')
-# Get empirical CI around simulated performance
-res_ci_trial = res_ci_trial.pivot_table('val',list(cn_gg.drop('tt'))+['metric'],'tt')
-res_ci_trial = res_ci_trial.rename(columns=di_alpha).reset_index()
-# Remove sim and z-score for now
-res_ci_trial = res_ci_trial[~res_ci_trial['metric'].isin(['z','sim'])].reset_index(drop=True)
-res_ci_trial['metric'] = res_ci_trial['metric'].map(di_metric)
+res_sim_trial['metric'] = res_sim_trial['metric'].map(di_metric)
 
 # Horizontal lines to show null
 df_null = pd.DataFrame({'msr':lst_msr, 'null':vec_null, 'target':vec_target})
@@ -260,17 +246,8 @@ df_null = df_null.melt('msr',None,'calib')
 
 # (i) Plot trial results
 gtit = 'Horizontal lines shows null hypothesis\nLine range shows values of simulations'
-# Put beta as a type of metric
-grp1 = ['ds','msr','frac','n_trial']
-tmp1 = res_ci_trial.melt(grp1,['beta_lb','beta_ub'])
-tmp1 = tmp1.drop_duplicates().assign(metric='Type-II error')
-tmp1['tt'] = tmp1['tt'].str.replace('beta_','',regex=False)
-tmp1 = tmp1.pivot_table('value',grp1+['metric'],'tt').reset_index()
-tmp2 = res_ci_trial.drop(columns=['beta_lb','beta_ub'])
-tmp_df = pd.concat(objs=[tmp1, tmp2],axis=0).reset_index(drop=True)
-
 colz = ["#F8766D","#619CFF","#00BA38"]
-gg_trial_sim = (pn.ggplot(tmp_df,pn.aes(x='frac',y='med',color='metric',fill='metric')) + 
+gg_trial_sim = (pn.ggplot(res_sim_trial,pn.aes(x='frac',y='med',color='metric',fill='metric')) + 
     pn.geom_line() + 
     pn.geom_ribbon(pn.aes(ymin='lb',ymax='ub'),alpha=0.5,color='black') + 
     pn.theme_bw() + pn.ggtitle(gtit) + 
@@ -283,4 +260,4 @@ gg_trial_sim = (pn.ggplot(tmp_df,pn.aes(x='frac',y='med',color='metric',fill='me
     pn.facet_grid('msr~ds',labeller=pn.labeller(msr=di_msr, ds=di_ds)))
 gg_trial_sim.save(os.path.join(dir_figures,'gg_trial_sim.png'),height=7,width=12)
 
-
+print('~~~ End of run_hydro.py ~~~')
