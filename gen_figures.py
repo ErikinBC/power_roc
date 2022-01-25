@@ -13,7 +13,6 @@ makeifnot(dir_figures)
 
 # Tidy up the different labels
 di_msr = {'sens':'Sensitivity', 'spec':'Specificity', 'thresh':'Threshold'}
-di_tt = {'oracle':'Oracle', 'lb':'Lower-bound CI', 'ub':'Upper-bound CI'}
 
 
 ############################
@@ -129,7 +128,7 @@ thresh_spec = thresh_spec.merge(thresh_chosen.drop(columns='msr'))
 thresh_chosen = thresh_chosen.assign(sens=lambda x: 1-norm(loc=mu).cdf(x['thresh']))
 
 # (a) Intersection of thresholds to 50% sensitivity
-gtit = 'A: Empirical threshold choice for %i%% sensivitiy' % (100*sens_target)
+gtit = 'A: Empirical threshold choice for %i%% sensitivity' % (100*sens_target)
 gg_roc_thresh = (pn.ggplot(df_emp_thresh,pn.aes(x='val',y='thresh')) + 
     pn.theme_bw() + pn.labs(y='Operating threshold',x='Performance target') + 
     pn.ggtitle(gtit) + pn.facet_wrap('~msr') + 
@@ -294,7 +293,7 @@ df_thresh = pd.concat(holder_thresh).melt(['thresh','boundary'],None,'msr')
 df_power = pd.concat(holder_power).rename(columns={'power':'oracle'})
 df_power = df_power.melt(['msr','h0','thresh'],['oracle','lb','ub'],'tt','power')
 
-
+di_tt = {'oracle':'Oracle', 'lb':'Lower-bound CI', 'ub':'Upper-bound CI'}
 # (i) Plot the trade-off curve
 gg_thresh_power = (pn.ggplot(df_power,pn.aes(x='thresh',y='h0',color='power')) + 
     pn.theme_bw() + pn.geom_point(alpha=0.5) + 
