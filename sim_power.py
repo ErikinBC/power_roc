@@ -22,7 +22,7 @@ n_test, n_trial = 400, 400
 n_bs, alpha = 1000, 0.05
 sens = 0.5
 nsim = 2500
-method = 'quantile'
+method = None
 
 # TEST OVER RANGES OF SENSITIVITY/SPECIFCITY/SAMPLE SIZE
 lst_sens = [0.5, 0.6, 0.7]
@@ -59,8 +59,8 @@ for sens in lst_sens:
                 # (iii) Run hypothesis test
                 vec_msr = ['sens', 'spec']
                 sens_act, spec_act = enc_dgp.get_tptn(y=dat_trial['y'],s=dat_trial['s']).values.flatten()
-                tmp1 = enc_dgp.binom_stat(sens_act, null_sens, n1_trial).assign(msr='sens')
-                tmp2 = enc_dgp.binom_stat(spec_act, null_spec, n0_trial).assign(msr='spec')
+                tmp1 = enc_dgp.binom_stat(sens_act, null_sens, n1_trial).assign(msr='sens', h0=null_sens)
+                tmp2 = enc_dgp.binom_stat(spec_act, null_spec, n0_trial).assign(msr='spec', h0=null_spec)
                 res_trial = pd.concat(objs=[tmp1, tmp2], axis=0)
 
                 # (iv) Store
@@ -102,6 +102,7 @@ res_calib = res_power.groupby(cn_gg)[cn_val].sum().reset_index()
 res_calib = get_CI(res_calib, 'reject', nsim)
 res_calib[cn_val] = res_calib[cn_val] / nsim
 res_calib = res_calib.drop(columns='method').drop_duplicates()
+
 
 ########################
 # --- (2) FIGURES  --- #
