@@ -3,8 +3,10 @@ import os
 import numpy as np
 import pandas as pd
 import plotnine as pn
+from funs_enc import dgp_bin
+from funs_stats import emp_roc_curve
 from funs_support import makeifnot, round_up
-from funs_stats import dgp_bin, emp_roc_curve
+
 dir_base = os.getcwd()
 dir_figures = os.path.join(dir_base, 'figures')
 makeifnot(dir_figures)

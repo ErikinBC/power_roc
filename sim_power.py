@@ -3,15 +3,16 @@ from time import time
 import numpy as np
 import pandas as pd
 import plotnine as pn
+from funs_enc import dgp_bin
+from funs_stats import get_CI
 from funs_support import makeifnot
-from funs_stats import dgp_bin, get_CI
 
 dir_base = os.getcwd()
 dir_figures = os.path.join(dir_base, 'figures')
 makeifnot(dir_figures)
 
 di_msr = {'sens':'Sensitivity', 'spec':'Specificity', 'thresh':'Threshold'}
-di_method = {'basic':'Basic', 'quantile':'Quantile', 'expanded':'Quantile (t-adj)', 'studentized':'Studentized', 'bca':'BCa'}
+di_method = {'binom':'Binomial','basic':'Basic', 'quantile':'Quantile', 'expanded':'Quantile (t-adj)', 'studentized':'Studentized', 'bca':'BCa'}
 
 
 ##################################
@@ -22,7 +23,7 @@ n_test, n_trial = 400, 400
 n_bs, alpha = 1000, 0.05
 sens = 0.5
 nsim = 2500
-method = None
+method = 'binom'
 
 # TEST OVER RANGES OF SENSITIVITY/SPECIFCITY/SAMPLE SIZE
 lst_sens = [0.5, 0.6, 0.7]
@@ -109,7 +110,8 @@ res_calib = res_calib.drop(columns='method').drop_duplicates()
 
 # (i) Coverage plot
 posd = pn.position_dodge(0.5)
-gg_cover_bs = (pn.ggplot(res_cover, pn.aes(x='msr',y='cover',color='method',shape='sens.astype(str)')) + 
+tmp_df = res_cover[res_cover['method'] != 'Quantile (t-adj)']
+gg_cover_bs = (pn.ggplot(tmp_df, pn.aes(x='msr',y='cover',color='method',shape='sens.astype(str)')) + 
     pn.theme_bw() + pn.labs(y='Coverage') + 
     pn.ggtitle('Dashed line shows coverage target') + 
     pn.geom_hline(yintercept=1-alpha,linetype='--') + 

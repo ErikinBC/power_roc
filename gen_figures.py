@@ -5,8 +5,9 @@ import plotnine as pn
 import patchworklib as pw
 from matplotlib import rc
 from scipy.stats import skewnorm, norm
+from funs_enc import dgp_bin
+from funs_stats import emp_roc_curve, auc_rank, find_auroc
 from funs_support import makeifnot, gg_save, grid_save, interp_df
-from funs_stats import dgp_bin, emp_roc_curve, auc_rank, find_auroc
 dir_base = os.getcwd()
 dir_figures = os.path.join(dir_base, 'figures')
 makeifnot(dir_figures)
@@ -142,8 +143,10 @@ gg_roc_thresh = (pn.ggplot(df_emp_thresh,pn.aes(x='val',y='thresh')) +
 # gg_save('gg_roc_thresh.png', dir_figures, gg_roc_thresh, 9, 3.5)
 
 # (b) Distribution of thresholds
+oracle_thresh = mu + norm.ppf(1-sens_target)
 gg_dist_thresh = (pn.ggplot(thresh_chosen, pn.aes(x='thresh')) + pn.theme_bw() + 
     pn.geom_histogram(fill='grey',alpha=0.5,color='red',bins=20) + 
+    pn.geom_vline(xintercept=oracle_thresh) + 
     pn.labs(x='Threshold',y='Frequency',title='B: Threshold distribution'))
 # gg_save('gg_dist_thresh.png', dir_figures, gg_dist_thresh, 4.5, 3.5)
 
@@ -152,7 +155,7 @@ rc('text', usetex=True)
 gg_dist_sens = (pn.ggplot(thresh_chosen, pn.aes(x='sens')) + pn.theme_bw() + 
     pn.geom_histogram(fill='grey',alpha=0.5,color='green',bins=20) + 
     pn.geom_vline(xintercept=sens_target) + 
-    pn.ggtitle('C: Oracle sensitivity') + 
+    pn.ggtitle('C: Sensitivity distribution') + 
     pn.labs(x='$\Phi(\mu - \hat{t})$',y='Frequency'))
 # gg_save('gg_dist_sens.png', dir_figures, gg_dist_sens, 4.5, 3.5)
 rc('text', usetex=False)
