@@ -1,3 +1,4 @@
 # Power calculations for sensitivity/specificity
 
-With application to real-world dataset. For simulation results only, run `pipeline.sh` up to (2).
+Code used for the post ["Statistically validating a model for a point on the ROC curve
+"](http://www.erikdrysdale.com/roc_calib/). The generate all eight figures used in the post, run `pipeline.sh` up to (2).
