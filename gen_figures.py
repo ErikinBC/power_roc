@@ -354,12 +354,12 @@ df_thresh = df_thresh.assign(x=lambda x: np.where(x['msr']=='sens',x['thresh']-0
 
 # (v) Make the plot
 gg_roc_diabetes = (pn.ggplot(df_roc, pn.aes(x='thresh',y='value')) + 
-    pn.theme_bw() + pn.geom_step() + pn.guides(color=False) + 
+    pn.theme_bw() + pn.geom_step() + 
     pn.facet_wrap('~msr',labeller=pn.labeller(msr=di_msr)) + 
     pn.geom_point(pn.aes(x='thresh',y='h0',color='col'),data=df_thresh) + 
     pn.geom_text(pn.aes(x='x',y='h0',color='col',label='lbl'),data=df_thresh,size=8,nudge_y=-0.05) + 
-    pn.scale_color_gradient2(low='blue',high='red',mid='grey',midpoint=0.66) + 
+    pn.scale_color_gradient2(name='Trial power CI',low='blue',high='red',mid='grey',midpoint=0.66,breaks=[0,0.25,0.50,0.75,1],limits=[0,1]) + 
     pn.labs(x='Operating threshold', y='Performance measure/null-hypothesis'))
-gg_save('gg_roc_diabetes.png', dir_figures, gg_roc_diabetes, 8, 3.5)
+gg_save('gg_roc_diabetes.png', dir_figures, gg_roc_diabetes, 8.5, 3.5)
 
 print('~~~ End of gen_figures.py ~~~')
