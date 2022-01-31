@@ -5,6 +5,9 @@ import plotnine as pn
 import patchworklib as pw
 from matplotlib import rc
 from scipy.stats import skewnorm, norm
+from sklearn.datasets import load_diabetes
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import train_test_split
 from funs_enc import dgp_bin
 from funs_stats import emp_roc_curve, auc_rank, find_auroc
 from funs_support import makeifnot, gg_save, grid_save, interp_df
@@ -307,5 +310,56 @@ gg_thresh_power = (pn.ggplot(df_power,pn.aes(x='thresh',y='h0',color='power')) +
     pn.scale_linetype_discrete(name='Boundary') + 
     pn.scale_color_gradient2(name='Power',low='blue',mid='grey',high='red',midpoint=0.25))
 gg_save('gg_thresh_power.png', dir_figures, gg_thresh_power, 9, 6)
+
+
+#################################
+# --- (6) EXAMPLE DATASET   --- #
+
+msr, method = 'both', 'binom'
+n1_trial, n0_trial = 200, 200
+alpha, n_bs, seed = 0.05, 1000, 1
+lst_margin = np.array([0, 0.1, 0.2])
+lst_thresh = [-2, 0, +2]
+
+# (i) Load data and binarize labels
+X, y = load_diabetes(return_X_y=True)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=1/2, random_state=1)
+y_med = np.median(y_train)
+y_train = np.where(y_train >= y_med, 1, 0)
+y_test = np.where(y_test >= y_med, 1, 0)
+# (ii) Fit model and make test-set predictions
+mdl = LogisticRegression(penalty='none', solver='lbfgs')
+mdl.fit(X_train, y_train)
+p_test = mdl.predict_proba(X_test)[:,1]
+logits_test = np.log(p_test/(1-p_test))
+# (iii) Pick three operating thresholds
+df_roc = emp_roc_curve(y_test, logits_test).melt('thresh',None,'msr')
+# (iv) Calculate the power for three margins
+cn_drop = ['method', 'power', 'n_trial']
+holder = []
+for thresh in lst_thresh:
+    enc_power = dgp_bin(mu=1, p=0.5, thresh=thresh)
+    enc_power.learn_threshold(y=y_test, s=logits_test)
+    null_sens = enc_power.sens_emp - lst_margin
+    null_spec = enc_power.spec_emp - lst_margin
+    enc_power.set_null_hypotheis(null_sens, null_spec)
+    enc_power.run_power(msr, n1_trial, n0_trial, method, seed, n_bs, alpha)
+    tmp_df = enc_power.df_power.drop(columns=cn_drop).assign(thresh=thresh)
+    holder.append(tmp_df)
+df_thresh = pd.concat(holder).reset_index(drop=True)
+# Make the CI labels
+tmp_ci = df_thresh[['lb','ub']].apply(lambda x: '(%0.0f-%0.0f)%%' % (100*x[0], 100*x[1]), axis=1)
+df_thresh['lbl'] = tmp_ci
+df_thresh = df_thresh.assign(x=lambda x: np.where(x['msr']=='sens',x['thresh']-0.5, x['thresh']+0.5), col=lambda x: (x['lb']+x['ub'])/2)
+
+# (v) Make the plot
+gg_roc_diabetes = (pn.ggplot(df_roc, pn.aes(x='thresh',y='value')) + 
+    pn.theme_bw() + pn.geom_step() + pn.guides(color=False) + 
+    pn.facet_wrap('~msr',labeller=pn.labeller(msr=di_msr)) + 
+    pn.geom_point(pn.aes(x='thresh',y='h0',color='col'),data=df_thresh) + 
+    pn.geom_text(pn.aes(x='x',y='h0',color='col',label='lbl'),data=df_thresh,size=8,nudge_y=-0.05) + 
+    pn.scale_color_gradient2(low='blue',high='red',mid='grey',midpoint=0.66) + 
+    pn.labs(x='Operating threshold', y='Performance measure/null-hypothesis'))
+gg_save('gg_roc_diabetes.png', dir_figures, gg_roc_diabetes, 8, 3.5)
 
 print('~~~ End of gen_figures.py ~~~')

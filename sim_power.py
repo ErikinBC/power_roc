@@ -19,11 +19,10 @@ di_method = {'binom':'Binomial','basic':'Basic', 'quantile':'Quantile', 'expande
 # --- (1) POWER SIMULATIONS  --- #
 
 mu, p = 1, 0.5
-n_test, n_trial = 400, 400
 n_bs, alpha = 1000, 0.05
 sens = 0.5
 nsim = 2500
-method = 'binom'
+method = None
 
 # TEST OVER RANGES OF SENSITIVITY/SPECIFCITY/SAMPLE SIZE
 lst_sens = [0.5, 0.6, 0.7]
