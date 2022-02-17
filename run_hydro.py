@@ -10,14 +10,15 @@ from funs_support import makeifnot, round_up
 dir_base = os.getcwd()
 dir_figures = os.path.join(dir_base, 'figures')
 makeifnot(dir_figures)
-dir_data = os.path.join(dir_base, 'data')
+# dir_data = os.path.join(dir_base, 'data')
+dir_data = "C:/Users/lauren erdman/Desktop/kidney_img/HN/Results_20220126/Datasheets/"
 makeifnot(dir_data)
 
 # Set up shared parameters
 nsim = 250
 alpha = 0.05
 di_msr = {'sens':'Sensitivity', 'spec':'Specificity', 'thresh':'Threshold'}
-di_ds = {'test':'Test','hsk':'HSK', 'stan':'Stanford', 'iowa':'Iowa'}
+di_ds = {'test':'Test','hsk':'HSK', 'stan':'Stanford', 'iowa':'Iowa', 'chop':'CHOP'}
 di_metric = {'pval':'P-value', 'stat':'Statistic', 't2e':'Type-II (error)', 'Power':'Power'}
 lst_msr = ['sens','spec']
 
@@ -25,15 +26,31 @@ lst_msr = ['sens','spec']
 #########################
 # --- (1) LOAD DATA --- #
 
-dat_test = pd.read_csv(os.path.join(dir_data, 'ValPredictions_withTarget.csv')) 
+    ## with Cov data
+dat_test = pd.read_csv(os.path.join(dir_data, 'Val_predictions_20220201.csv'))
 dat_test = dat_test.rename(columns={'mod_pred_ep30':'s'}).assign(ds='test')
-dat_hsk = pd.read_csv(os.path.join(dir_data, 'SilentTrialPredictions_withTarget.csv'))
+dat_hsk = pd.read_csv(os.path.join(dir_data, 'SilentTrial_predictions_20220201.csv'))
 dat_hsk = dat_hsk.rename(columns={'st_pred_mod_ep30':'s'}).assign(ds='hsk')
-dat_stan = pd.read_csv(os.path.join(dir_data, 'StanfordPredictions_withTarget.csv'))
+dat_stan = pd.read_csv(os.path.join(dir_data, 'Stanford_predictions_20220201.csv'))
 dat_stan = dat_stan.rename(columns={'stan_pred_mod_ep30':'s'}).assign(ds='stan')
-dat_iowa = pd.read_csv(os.path.join(dir_data, 'UIowaPredictions_withTarget.csv'))
+dat_iowa = pd.read_csv(os.path.join(dir_data, 'UIowa_predictions_20220201.csv'))
 dat_iowa = dat_iowa.rename(columns={'ui_pred_mod_ep30':'s'}).assign(ds='iowa')
-df_scores = pd.concat(objs=[dat_test, dat_hsk, dat_stan, dat_iowa])
+dat_chop = pd.read_csv(os.path.join(dir_data, 'CHOP_predictions_20220201.csv'))
+dat_chop = dat_iowa.rename(columns={'chop_pred_mod_ep30':'s'}).assign(ds='chop')
+
+    ## No Cov data
+# dat_test = pd.read_csv(os.path.join(dir_data, 'Val_NoCov_predictions_20220213.csv'))
+# dat_test = dat_test.rename(columns={'mod_pred_ep30':'s'}).assign(ds='test')
+# dat_hsk = pd.read_csv(os.path.join(dir_data, 'SilentTrial_NoCov_predictions_20220213.csv'))
+# dat_hsk = dat_hsk.rename(columns={'st_pred_mod_ep30':'s'}).assign(ds='hsk')
+# dat_stan = pd.read_csv(os.path.join(dir_data, 'Stanford_NoCov_predictions_20220213.csv'))
+# dat_stan = dat_stan.rename(columns={'stan_pred_mod_ep30':'s'}).assign(ds='stan')
+# dat_iowa = pd.read_csv(os.path.join(dir_data, 'UIowa_NoCov_predictions_20220213.csv'))
+# dat_iowa = dat_iowa.rename(columns={'ui_pred_mod_ep30':'s'}).assign(ds='iowa')
+# dat_chop = pd.read_csv(os.path.join(dir_data, 'CHOP_NoCov_predictions_20220213.csv'))
+# dat_chop = dat_iowa.rename(columns={'chop_pred_mod_ep30':'s'}).assign(ds='chop')
+
+df_scores = pd.concat(objs=[dat_test, dat_hsk, dat_stan, dat_iowa, dat_chop])
 df_scores = df_scores.rename(columns={'target01':'y'}).drop(columns=['Unnamed: 0'],errors='ignore')
 df_scores = df_scores.assign(logits=lambda x: np.log(x['s']/(1-x['s'])))
 # Use validation as the test calibration
@@ -138,11 +155,17 @@ gg_thresh_ds.save(os.path.join(dir_figures,'gg_thresh_ds.png'),height=12,width=8
 # --- (3) POWER EXPECTATIONS --- #
 
 # Threshold was already determined
-thresh_val = 0.08497446
+    ## Original model with covariates
+thresh_val = 0.0634979
+
+    ## No covariate model
+# thresh_val = 0.06930892
+
+
 enc_test = dgp_bin(thresh=thresh_val, alpha=alpha, mu=1,p=0.5)
 enc_test.learn_threshold(y=dat_test['y'], s=dat_test['s'])
 enc_test.create_df()
-# Empirical sensitivity is ~61% and empirical specificity is ~94%
+# Empirical sensitivity is ~90% and empirical specificity is ~74%
 print(enc_test.df_rv.query('tt == "emp"'))
 
 # Margin range to test over
@@ -153,8 +176,19 @@ n_lb = 5
 n0_max, n1_max = df_n_ds.groupby(['y'])['n'].max().sort_index().values.flat
 dat_n_max = pd.DataFrame({'msr':lst_msr,'n':[n1_max, n0_max]})
 n_prop_seq = np.array([1/3, 2/3, 3/3])
-n1_trial_seq = (round_up(n1_max, n_lb)*n_prop_seq).astype(int)
-n0_trial_seq = (round_up(n0_max, n_lb)*n_prop_seq).astype(int)
+    ## original
+# n1_trial_seq = (round_up(n1_max, n_lb)*n_prop_seq).astype(int)
+# n0_trial_seq = (round_up(n0_max, n_lb)*n_prop_seq).astype(int)
+    ## revised
+# n1_trial_seq = [20, 30, 90, 250, 630]
+# n0_trial_seq = [10, 30, 60, 75, 200]
+
+#sensitivity
+n1_trial_seq = [27, 56, 57, 75]
+
+#specificity
+n0_trial_seq = [20, 29, 246, 636]
+
 
 null_sens = enc_test.sens_emp - lst_margin
 null_spec = enc_test.spec_emp - lst_margin
@@ -167,15 +201,15 @@ holder_n = []
 for n1, n0 in zip(n1_trial_seq, n0_trial_seq):
     n1, n0 = int(n1), int(n0)
     enc_test.run_power('both', n1_trial=n1, n0_trial=n0, method='quantile')
-    tmp_df = enc_test.df_power.drop(columns=['method','power'])
-    tmp_df= tmp_df.merge(df_margin)
+    tmp_df = enc_test.df_power.drop(columns=['method', 'power'])
+    tmp_df = tmp_df.merge(df_margin)
     holder_n.append(tmp_df)
 res_test_margin = pd.concat(holder_n).reset_index(drop=True)
 res_test_margin['n_trial'] = pd.Categorical(res_test_margin['n_trial'])
 
-gg_test_margin = (pn.ggplot(res_test_margin, pn.aes(x='margin',fill='n_trial')) + 
+gg_test_margin = (pn.ggplot(res_test_margin, pn.aes(x='margin', fill='n_trial')) +
     pn.theme_bw() + 
-    pn.scale_fill_discrete(name='# trial') + 
+    pn.scale_fill_discrete(name='Sample Size') +
     pn.facet_wrap('~msr',labeller=pn.labeller(msr=di_msr)) + 
     pn.ggtitle('95% CI based on quantile approach') +
     pn.labs(x='Null hypothesis margin',y='Power estimate (CI)') + 
@@ -187,11 +221,13 @@ gg_test_margin.save(os.path.join(dir_figures,'gg_test_margin.png'),height=4,widt
 # --- (4) TRIAL RESULTS --- #
 
 # Set the margin
-margin_sens = 0.25
-margin_spec = 0.05
+margin_sens = 0.10
+margin_spec = 0.25
+# margin_sens = 0.25
+# margin_spec = 0.05
 null_sens = enc_test.sens_emp - margin_sens
 null_spec = enc_test.spec_emp - margin_spec
-vec_target = np.array([enc_test.sens_emp, enc_test.spec_emp])  
+vec_target = np.array([enc_test.sens_emp, enc_test.spec_emp])
 vec_null = np.array([null_sens, null_spec])
 enc_test.set_null_hypotheis(null_sens, null_spec)
 
@@ -202,7 +238,7 @@ di_alpha = dict(zip(lst_alpha, ['lb','med','ub']))
 # Simulated the range of sensitivity/specificities through random patient order
 nsim = 100
 lst_frac = np.arange(0.25, 1.01, 0.05).round(2)
-lst_ds = ['stan', 'iowa', 'hsk']
+lst_ds = ['hsk', 'stan', 'iowa', 'chop']
 cn_q = ['pval','stat']
 holder_ds = []
 for ds in lst_ds:
